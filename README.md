@@ -1,7 +1,7 @@
 # Omnisearch MCP
 
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.9-blue?logo=typescript)](https://www.typescriptlang.org/)
-[![MCP](https://img.shields.io/badge/MCP-1.27-green)](https://modelcontextprotocol.io/)
+[![MCP](https://img.shields.io/badge/MCP-1.27.1-green)](https://modelcontextprotocol.io/)
 [![License](https://img.shields.io/badge/license-MIT-lightgrey)](LICENSE)
 
 > **Multi-provider search aggregation with intelligent ranking.**
