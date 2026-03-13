@@ -2,12 +2,21 @@
 // tracks progress, and aggregates results.
 
 import type { SearchResult } from '../common/types.js';
+import { loggers } from '../common/logger.js';
+import { config } from '../config/env.js';
 import { get_active_ai_providers, type AISearchProvider, type UnifiedAISearchProvider } from '../providers/unified/ai_search.js';
 import type { UnifiedWebSearchProvider } from '../providers/unified/web_search.js';
+import { gemini_grounded_search } from '../providers/ai_response/gemini_grounded/index.js';
 import { run_web_search_fanout } from './web_search_fanout.js';
+
+const logger = loggers.aiResponse();
 
 const GLOBAL_TIMEOUT_MS = 120_000; // 2 min hard deadline for the entire fanout
 const PROGRESS_INTERVAL_MS = 5_000;
+
+// Providers routed through the oauth-llm proxy — consistently slowest.
+// We return early if these are the only ones still pending (at most 1 straggler).
+const LLM_PROXY_PROVIDERS = new Set(['chatgpt', 'claude', 'gemini']);
 
 interface ProviderTask {
 	name: string;
@@ -72,19 +81,27 @@ const build_tasks = (
 		promise: ai_search_ref.search({ query, provider: ap.name as AISearchProvider }),
 	}));
 
-	if (web_search_ref) {
+	if (web_search_ref && config.ai_response.gemini_grounded.api_key) {
 		tasks.push({
-			name: 'web_search',
-			promise: run_web_search_fanout(web_search_ref, query).then((fanout) =>
-				fanout.web_results.map((r) => ({
-					title: r.title,
+			name: 'gemini-grounded',
+			promise: (async () => {
+				const fanout = await run_web_search_fanout(web_search_ref, query);
+				const sources = fanout.web_results.map((r) => ({
 					url: r.url,
-					snippet: r.snippets[0] || '',
-					source_provider: 'web_search',
-				})),
-			),
+					snippets: r.snippets,
+				}));
+				return gemini_grounded_search(query, sources);
+			})(),
 		});
 	}
+
+	logger.debug('Built AI provider tasks', {
+		op: 'build_tasks',
+		query: query.slice(0, 100),
+		total_tasks: tasks.length,
+		ai_providers: get_active_ai_providers().map((p) => p.name),
+		web_search_enabled: !!web_search_ref,
+	});
 
 	return tasks;
 };
@@ -99,10 +116,31 @@ const execute_tasks = async (
 	const start_time = Date.now();
 	const total_count = tasks.length;
 
-	console.error(JSON.stringify({
-		event: 'progress', progress: 0, total: total_count,
-		message: `Querying ${total_count} providers: ${tasks.map((t) => t.name).join(', ')}`,
-	}));
+	logger.info('Starting AI provider fanout', {
+		op: 'ai_fanout_start',
+		total_providers: total_count,
+		providers: tasks.map((t) => t.name),
+	});
+
+	// Resolves when we can return early (only LLM proxy stragglers remain)
+	let resolve_early!: () => void;
+	const early_exit = new Promise<void>((resolve) => { resolve_early = resolve; });
+
+	const check_early_exit = () => {
+		const pending = tasks.filter((t) => !completed_set.has(t.name));
+		if (pending.length === 0) { resolve_early(); return; }
+		// Early exit disabled by default — wait for all providers.
+		// Uncomment below to skip the last LLM proxy straggler:
+		// if (pending.length <= 1 && pending.every((t) => LLM_PROXY_PROVIDERS.has(t.name))) {
+		// 	logger.info('Early exit: only LLM proxy straggler(s) remaining', {
+		// 		op: 'early_exit',
+		// 		pending: pending.map((t) => t.name),
+		// 		completed: completed_count,
+		// 		total: total_count,
+		// 	});
+		// 	resolve_early();
+		// }
+	};
 
 	const tracked = tasks.map((task) =>
 		task.promise.then(
@@ -112,12 +150,17 @@ const execute_tasks = async (
 				completed_set.add(task.name);
 				const entry = { ...build_answer_entry(task.name, value), duration_ms };
 				answers.push(entry);
+
 				// Log metadata only — not full answer text (avoids 10KB+ log bloat)
-				console.error(JSON.stringify({
-					event: 'provider_done', progress: completed_count, total: total_count,
-					source: entry.source, duration_ms, answer_length: entry.answer.length,
+				logger.info('Provider completed', {
+					op: 'provider_done',
+					provider: task.name,
+					progress: `${completed_count}/${total_count}`,
+					duration_ms,
+					answer_length: entry.answer.length,
 					citation_count: entry.citations.length,
-				}));
+				});
+				check_early_exit();
 			},
 			(reason) => {
 				const duration_ms = Date.now() - start_time;
@@ -125,10 +168,15 @@ const execute_tasks = async (
 				completed_set.add(task.name);
 				const error_msg = reason instanceof Error ? reason.message : String(reason);
 				failed.push({ provider: task.name, error: error_msg, duration_ms });
-				console.error(JSON.stringify({
-					event: 'provider_failed', progress: completed_count, total: total_count,
-					provider: task.name, error: error_msg, duration_ms,
-				}));
+
+				logger.warn('Provider failed', {
+					op: 'provider_failed',
+					provider: task.name,
+					progress: `${completed_count}/${total_count}`,
+					duration_ms,
+					error: error_msg,
+				});
+				check_early_exit();
 			},
 		),
 	);
@@ -136,35 +184,49 @@ const execute_tasks = async (
 	const progress_interval = setInterval(() => {
 		const pending = tasks.filter((t) => !completed_set.has(t.name)).map((t) => t.name);
 		if (pending.length > 0) {
-			console.error(JSON.stringify({
-				event: 'waiting', progress: completed_count, total: total_count,
-				done: Array.from(completed_set), pending,
-			}));
+			logger.debug('Waiting for providers', {
+				op: 'provider_progress',
+				completed: completed_count,
+				total: total_count,
+				done: Array.from(completed_set),
+				pending,
+			});
 		}
 	}, PROGRESS_INTERVAL_MS);
 
 	try {
-		// Race all providers against a global deadline to avoid exceeding Workers limits
+		// Race: early exit (LLM stragglers only) vs global deadline vs all done
 		let timer_id: ReturnType<typeof setTimeout>;
 		const deadline = new Promise<void>((resolve) => { timer_id = setTimeout(resolve, GLOBAL_TIMEOUT_MS); });
-		await Promise.race([Promise.all(tracked), deadline]);
+		await Promise.race([Promise.all(tracked), early_exit, deadline]);
 		clearTimeout(timer_id!);
 	} finally {
 		clearInterval(progress_interval);
 	}
 
-	// Mark timed-out providers as failed so they don't silently disappear
+	// Mark still-pending providers so they don't silently disappear from the response
 	if (completed_count < total_count) {
 		const pending = tasks.filter((t) => !completed_set.has(t.name));
 		for (const t of pending) {
-			failed.push({ provider: t.name, error: 'Timed out (global deadline)', duration_ms: GLOBAL_TIMEOUT_MS });
+			const is_early = LLM_PROXY_PROVIDERS.has(t.name);
+			const error_msg = is_early ? 'Skipped (early exit — LLM straggler)' : 'Timed out (global deadline)';
+			failed.push({ provider: t.name, error: error_msg, duration_ms: Date.now() - start_time });
+			logger.warn(is_early ? 'Provider skipped (early exit)' : 'Provider timed out', {
+				op: is_early ? 'provider_skipped' : 'provider_timeout',
+				provider: t.name,
+				duration_ms: Date.now() - start_time,
+			});
 		}
 	}
 
-	console.error(JSON.stringify({
-		event: 'all_done', progress: completed_count, total: total_count,
+	logger.info('AI fanout complete', {
+		op: 'ai_fanout_complete',
+		total: total_count,
+		succeeded: answers.length,
+		failed: failed.length,
 		timed_out: completed_count < total_count,
-	}));
+		duration_ms: Date.now() - start_time,
+	});
 
 	// Defensive copy + sort — late-arriving promises may still push into the
 	// original arrays after we return (they run past the deadline).
@@ -180,12 +242,24 @@ export const run_answer_fanout = async (
 	query: string,
 ): Promise<AnswerResult | null> => {
 	const tasks = build_tasks(ai_search_ref, web_search_ref, query);
-	if (tasks.length === 0) return null;
+	if (tasks.length === 0) {
+		logger.warn('No AI providers available for answer', {
+			op: 'answer_fanout',
+			query: query.slice(0, 100),
+		});
+		return null;
+	}
 
 	const start_time = Date.now();
+	logger.info('Starting answer fanout', {
+		op: 'answer_fanout_start',
+		query: query.slice(0, 100),
+		providers_count: tasks.length,
+	});
+
 	const { answers, failed } = await execute_tasks(tasks);
 
-	return {
+	const result: AnswerResult = {
 		query,
 		total_duration_ms: Date.now() - start_time,
 		providers_queried: tasks.map((t) => t.name),
@@ -193,4 +267,15 @@ export const run_answer_fanout = async (
 		providers_failed: failed,
 		answers,
 	};
+
+	logger.info('Answer fanout complete', {
+		op: 'answer_fanout_complete',
+		query: query.slice(0, 100),
+		total_duration_ms: result.total_duration_ms,
+		providers_queried: result.providers_queried.length,
+		providers_succeeded: result.providers_succeeded.length,
+		providers_failed: result.providers_failed.length,
+	});
+
+	return result;
 };
