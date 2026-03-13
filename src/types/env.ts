@@ -53,6 +53,8 @@ export interface Env {
 	CLOUDFLARE_EMAIL?: string;
 	CLOUDFLARE_API_KEY?: string;
 
+	SUPADATA_API_KEY?: string;
+
 	// Fetch retry/timeout tuning
 	FETCH_MAX_RETRIES?: string;
 	FETCH_RETRY_MIN_TIMEOUT_MS?: string;

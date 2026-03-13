@@ -1,15 +1,83 @@
-// Fetch orchestrator: dispatches to a single provider (default: tavily) with retry
+// Fetch orchestrator: tiered waterfall with parallel groups and domain breakers
+//
+// Flow:
+//   1. Check domain breakers in order (youtube→supadata, social→sociavault)
+//   2. Walk waterfall steps top-to-bottom (tavily first, then firecrawl, etc.)
+//   3. Return first good result; throw if all providers exhausted
+//
+// Config: config.yaml (source of truth) — keep the const below in sync.
 
 import type { FetchResult } from '../common/types.js';
+import { ErrorType, ProviderError } from '../common/types.js';
 import { loggers } from '../common/logger.js';
-import { retry_with_backoff } from '../common/utils.js';
-import { config } from '../config/env.js';
 import {
 	type FetchProviderName,
 	type UnifiedFetchProvider,
+	get_active_fetch_providers,
 } from '../providers/unified/fetch.js';
 
 const logger = loggers.fetch();
+
+// ── Config (runtime mirror of config.yaml) ───────────────────────
+
+type WaterfallStep =
+	| { solo: string }
+	| { parallel: string[] }
+	| { sequential: string[] };
+
+interface BreakerConfig {
+	provider: string;
+	domains: string[];
+}
+
+const CONFIG = {
+	breakers: {
+		youtube: {
+			provider: 'supadata',
+			domains: ['youtube.com', 'youtu.be'],
+		},
+		social_media: {
+			provider: 'sociavault',
+			domains: [
+				'tiktok.com', 'instagram.com', 'youtube.com', 'youtu.be',
+				'linkedin.com', 'facebook.com', 'fb.com',
+				'twitter.com', 'x.com', 'pinterest.com',
+				'reddit.com', 'threads.net', 'snapchat.com',
+			],
+		},
+	} as Record<string, BreakerConfig>,
+
+	waterfall: [
+		{ solo: 'tavily' },
+		{ solo: 'firecrawl' },
+		{ parallel: ['linkup', 'cloudflare_browser'] },
+		{ parallel: ['diffbot', 'olostep'] },
+		{ parallel: ['scrapfly', 'scrapedo', 'decodo'] },
+		{ solo: 'zyte' },
+		{ solo: 'brightdata' },
+		{
+			sequential: [
+				'jina', 'spider', 'you', 'scrapeless',
+				'scrapingbee', 'scrapegraphai', 'scrappey', 'scrapingant',
+				'oxylabs', 'scraperapi', 'leadmagic', 'opengraph',
+			],
+		},
+	] as WaterfallStep[],
+
+	failure: {
+		min_content_chars: 200,
+		challenge_patterns: [
+			'cf-browser-verification', 'challenge-platform', 'captcha',
+			'just a moment', 'ray id', 'checking your browser', 'access denied',
+			'enable javascript and cookies', 'please turn javascript on', 'one more step',
+			'[Chrome](https://www.google.com/chrome/',
+			'does not have access to this endpoint',
+		],
+		http_codes: [403, 429, 503],
+	},
+};
+
+// ── Types ────────────────────────────────────────────────────────
 
 export interface FetchRaceResult {
 	total_duration_ms: number;
@@ -19,7 +87,165 @@ export interface FetchRaceResult {
 	result: FetchResult;
 }
 
-const DEFAULT_PROVIDER: FetchProviderName = 'tavily';
+// ── Failure detection ────────────────────────────────────────────
+
+const is_fetch_failure = (result: FetchResult): boolean => {
+	if (!result.content || result.content.length < CONFIG.failure.min_content_chars) {
+		return true;
+	}
+	const lower = result.content.toLowerCase();
+	return CONFIG.failure.challenge_patterns.some((p) => lower.includes(p.toLowerCase()));
+};
+
+// ── Domain breaker detection ─────────────────────────────────────
+
+const matches_breaker = (url: string, breaker: BreakerConfig): boolean => {
+	try {
+		const hostname = new URL(url).hostname.toLowerCase().replace(/^www\./, '');
+		return breaker.domains.some(
+			(d) => hostname === d || hostname.endsWith(`.${d}`),
+		);
+	} catch {
+		return false;
+	}
+};
+
+// ── Single-provider attempt ──────────────────────────────────────
+
+const try_provider = async (
+	unified: UnifiedFetchProvider,
+	url: string,
+	provider: string,
+): Promise<FetchResult> => {
+	const result = await unified.fetch_url(url, provider as FetchProviderName);
+	if (is_fetch_failure(result)) {
+		throw new ProviderError(
+			ErrorType.PROVIDER_ERROR,
+			`Blocked or empty (${result.content?.length ?? 0} chars)`,
+			provider,
+		);
+	}
+	return result;
+};
+
+// ── Parallel heuristic: pick longest content ─────────────────────
+
+const pick_best = (results: Array<{ provider: string; result: FetchResult }>) =>
+	results.reduce((a, b) => (b.result.content.length > a.result.content.length ? b : a));
+
+// ── Step executors ───────────────────────────────────────────────
+
+interface StepContext {
+	unified: UnifiedFetchProvider;
+	url: string;
+	active: Set<string>;
+	attempted: string[];
+	failed: Array<{ provider: string; error: string; duration_ms: number }>;
+}
+
+const run_solo = async (ctx: StepContext, provider: string): Promise<FetchResult | undefined> => {
+	if (!ctx.active.has(provider)) return undefined;
+	ctx.attempted.push(provider);
+	const t0 = Date.now();
+	try {
+		return await try_provider(ctx.unified, ctx.url, provider);
+	} catch (error) {
+		ctx.failed.push({
+			provider,
+			error: error instanceof Error ? error.message : String(error),
+			duration_ms: Date.now() - t0,
+		});
+		return undefined;
+	}
+};
+
+const run_parallel = async (
+	ctx: StepContext,
+	providers: string[],
+): Promise<{ provider: string; result: FetchResult } | undefined> => {
+	const available = providers.filter((p) => ctx.active.has(p));
+	if (available.length === 0) return undefined;
+
+	ctx.attempted.push(...available);
+	const t0 = Date.now();
+
+	const settled = await Promise.allSettled(
+		available.map((p) => try_provider(ctx.unified, ctx.url, p).then((r) => ({ provider: p, result: r }))),
+	);
+
+	const successes: Array<{ provider: string; result: FetchResult }> = [];
+	for (let i = 0; i < settled.length; i++) {
+		const s = settled[i];
+		if (s.status === 'fulfilled') {
+			successes.push(s.value);
+		} else {
+			ctx.failed.push({
+				provider: available[i],
+				error: s.reason instanceof Error ? s.reason.message : String(s.reason),
+				duration_ms: Date.now() - t0,
+			});
+		}
+	}
+
+	return successes.length > 0 ? pick_best(successes) : undefined;
+};
+
+const run_sequential = async (
+	ctx: StepContext,
+	providers: string[],
+): Promise<{ provider: string; result: FetchResult } | undefined> => {
+	for (const provider of providers) {
+		if (!ctx.active.has(provider)) continue;
+		ctx.attempted.push(provider);
+		const t0 = Date.now();
+		try {
+			const result = await try_provider(ctx.unified, ctx.url, provider);
+			return { provider, result };
+		} catch (error) {
+			ctx.failed.push({
+				provider,
+				error: error instanceof Error ? error.message : String(error),
+				duration_ms: Date.now() - t0,
+			});
+		}
+	}
+	return undefined;
+};
+
+const execute_step = async (
+	ctx: StepContext,
+	step: WaterfallStep,
+): Promise<{ provider: string; result: FetchResult } | undefined> => {
+	if ('solo' in step) {
+		const result = await run_solo(ctx, step.solo);
+		return result ? { provider: step.solo, result } : undefined;
+	}
+	if ('parallel' in step) {
+		return run_parallel(ctx, step.parallel);
+	}
+	if ('sequential' in step) {
+		return run_sequential(ctx, step.sequential);
+	}
+	return undefined;
+};
+
+// ── Build result helper ──────────────────────────────────────────
+
+const build_result = (
+	start_time: number,
+	provider: string,
+	result: FetchResult,
+	attempted: string[],
+	failed: Array<{ provider: string; error: string; duration_ms: number }>,
+): FetchRaceResult => ({
+	total_duration_ms: Date.now() - start_time,
+	provider_used: provider,
+	providers_attempted: attempted,
+	providers_failed: failed,
+	result,
+});
+
+// ── Main entry point ─────────────────────────────────────────────
 
 export const run_fetch_race = async (
 	fetch_provider: UnifiedFetchProvider,
@@ -27,46 +253,70 @@ export const run_fetch_race = async (
 	options?: { provider?: FetchProviderName },
 ): Promise<FetchRaceResult> => {
 	const start_time = Date.now();
-	const provider = options?.provider ?? DEFAULT_PROVIDER;
-	const { max_retries, min_timeout_ms, max_timeout_ms } = config.fetch_retry;
+	const attempted: string[] = [];
+	const failed: Array<{ provider: string; error: string; duration_ms: number }> = [];
 
-	logger.info('Fetching URL', {
-		op: 'fetch',
-		provider,
-		url: url.slice(0, 200),
-		max_retries,
-	});
+	// Explicit provider mode (no waterfall)
+	if (options?.provider) {
+		const provider = options.provider;
+		attempted.push(provider);
+		logger.info('Fetch with explicit provider', {
+			op: 'fetch_explicit',
+			provider,
+			url: url.slice(0, 200),
+		});
+		const result = await fetch_provider.fetch_url(url, provider);
+		return build_result(start_time, provider, result, attempted, failed);
+	}
 
-	let attempt = 0;
-	const result = await retry_with_backoff(
-		() => {
-			attempt++;
-			if (attempt > 1) {
-				logger.warn('Retrying fetch', {
-					op: 'fetch_retry',
-					provider,
-					attempt,
-					elapsed_ms: Date.now() - start_time,
-				});
+	// Auto waterfall mode
+	logger.info('Waterfall start', { op: 'waterfall_start', url: url.slice(0, 200) });
+
+	const active = new Set(get_active_fetch_providers().map((p) => p.name));
+	const ctx: StepContext = { unified: fetch_provider, url, active, attempted, failed };
+
+	// Breakers: domain-specific providers tried before the waterfall
+	for (const [breaker_name, breaker_config] of Object.entries(CONFIG.breakers)) {
+		if (matches_breaker(url, breaker_config) && active.has(breaker_config.provider)) {
+			logger.info('Breaker matched', {
+				op: 'breaker_match',
+				breaker: breaker_name,
+				provider: breaker_config.provider,
+				url: url.slice(0, 200),
+			});
+			const breaker_result = await run_solo(ctx, breaker_config.provider);
+			if (breaker_result) {
+				return build_result(start_time, breaker_config.provider, breaker_result, attempted, failed);
 			}
-			return fetch_provider.fetch_url(url, provider);
-		},
-		{ max_retries, min_timeout_ms, max_timeout_ms },
-	);
+			logger.warn('Breaker failed, continuing', { op: 'breaker_fallthrough', breaker: breaker_name });
+		}
+	}
 
-	const total_duration_ms = Date.now() - start_time;
-	logger.info('Fetch complete', {
-		op: 'fetch_complete',
-		provider,
-		attempts: attempt,
-		total_duration_ms,
+	// Waterfall: walk steps top-to-bottom
+	for (const step of CONFIG.waterfall) {
+		const step_result = await execute_step(ctx, step);
+		if (step_result) {
+			logger.info('Waterfall resolved', {
+				op: 'waterfall_done',
+				provider: step_result.provider,
+				steps_tried: attempted.length,
+				total_ms: Date.now() - start_time,
+			});
+			return build_result(start_time, step_result.provider, step_result.result, attempted, failed);
+		}
+	}
+
+	// All exhausted
+	logger.error('Waterfall exhausted', {
+		op: 'waterfall_exhausted',
+		attempted: attempted.join(', '),
+		failed_count: failed.length,
+		total_ms: Date.now() - start_time,
 	});
 
-	return {
-		total_duration_ms,
-		provider_used: provider,
-		providers_attempted: [provider],
-		providers_failed: [],
-		result,
-	};
+	throw new ProviderError(
+		ErrorType.PROVIDER_ERROR,
+		`All providers failed for ${url.slice(0, 200)}. Tried: ${attempted.join(', ')}`,
+		'waterfall',
+	);
 };

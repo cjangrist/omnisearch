@@ -92,7 +92,7 @@ export async function handle_rest_fetch(
 	logger.info('Fetch request received', {
 		op: 'fetch_request',
 		url: sanitize_for_log(url),
-		provider: provider ?? 'auto',
+		provider: provider ?? 'auto (waterfall)',
 	});
 
 	const fetch_provider = get_fetch_provider();
@@ -131,6 +131,8 @@ export async function handle_rest_fetch(
 			content: result.result.content,
 			source_provider: result.provider_used,
 			duration_ms: result.total_duration_ms,
+			providers_attempted: result.providers_attempted,
+			providers_failed: result.providers_failed,
 			metadata: result.result.metadata,
 		});
 	} catch (err) {
