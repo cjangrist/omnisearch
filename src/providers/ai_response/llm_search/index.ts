@@ -1,3 +1,7 @@
+// OpenAI-compatible chat completions answer providers.
+// Each instance hits the same base URL with a different model string.
+// Sends the query verbatim as the user message and returns the assistant response.
+
 import { http_json } from '../../../common/http.js';
 import {
 	BaseSearchParams,
@@ -7,91 +11,100 @@ import {
 import { handle_provider_error } from '../../../common/utils.js';
 import { config } from '../../../config/env.js';
 
-const RESULT_URL_TEMPLATE = 'https://search.llm';
+const PRIMARY_SCORE = 1.0;
 
-type LlmSearchBackend = 'claude' | 'gemini' | 'codex';
-
-interface LlmSearchResponse {
+interface ChatCompletionResponse {
+	id: string;
 	model: string;
-	text: string;
-	provider: string;
-	output: unknown[];
+	choices: Array<{
+		message: { role: string; content: string };
+		finish_reason: string;
+	}>;
 }
 
-function create_llm_search_provider(
-	backend: LlmSearchBackend,
-	description: string,
-): SearchProvider {
-	const name = `llm_${backend}`;
+interface LLMProviderConfig {
+	api_key: string;
+	base_url: string;
+	model: string;
+	timeout: number;
+}
 
+function create_llm_provider(
+	provider_name: string,
+	description: string,
+	result_url: string,
+	get_config: () => LLMProviderConfig,
+): SearchProvider {
 	return {
-		name,
+		name: provider_name,
 		description,
 		async search(params: BaseSearchParams): Promise<SearchResult[]> {
+			const cfg = get_config();
+			if (!cfg.base_url) {
+				throw new Error(`${provider_name} base_url not configured`);
+			}
+
 			try {
-				const data = await http_json<LlmSearchResponse>(
-					name,
-					`${config.ai_response.llm_search.base_url}/search`,
+				const response = await http_json<ChatCompletionResponse>(
+					provider_name,
+					`${cfg.base_url}/chat/completions`,
 					{
 						method: 'POST',
 						headers: {
+							Authorization: `Bearer ${cfg.api_key ?? ''}`,
 							'Content-Type': 'application/json',
 						},
 						body: JSON.stringify({
-							prompt: params.query,
-							provider: backend,
+							model: cfg.model,
+							messages: [{ role: 'user', content: params.query }],
 						}),
-						signal: AbortSignal.timeout(
-							config.ai_response.llm_search.timeout,
-						),
+						signal: AbortSignal.timeout(cfg.timeout),
 					},
 				);
 
-				const answer_text = data.text || '';
+				const answer = response.choices?.[0]?.message?.content ?? '';
+				const model = response.model || cfg.model;
 
 				return [
 					{
-						title: `${backend} (${data.model || backend})`,
-						url: `${RESULT_URL_TEMPLATE}/${backend}`,
-						snippet: answer_text,
-						source_provider: name,
-						metadata: {
-							model: data.model,
-							backend: data.provider,
-						},
+						title: `${provider_name} (${model})`,
+						url: result_url,
+						snippet: answer,
+						score: PRIMARY_SCORE,
+						source_provider: provider_name,
+						metadata: { model },
 					},
 				];
 			} catch (error) {
-				handle_provider_error(
-					error,
-					name,
-					`fetch ${backend} answer via llm-search`,
-				);
+				handle_provider_error(error, provider_name, `fetch ${provider_name} answer`);
 			}
 		},
 	};
 }
 
-export const LlmClaudeProvider = () =>
-	create_llm_search_provider(
-		'claude',
-		'Claude with web search via llm-search service. Returns AI-generated answer grounded in real-time web results.',
-	);
+export const ChatGPTProvider = () => create_llm_provider(
+	'chatgpt',
+	'GPT-5.4 via OpenAI-compatible endpoint. Returns AI-generated answers with web search grounding.',
+	'https://chatgpt.com',
+	() => config.ai_response.chatgpt,
+);
 
-export const LlmGeminiProvider = () =>
-	create_llm_search_provider(
-		'gemini',
-		'Gemini with Google Search grounding via llm-search service. Returns AI-generated answer grounded in real-time web results.',
-	);
+export const ClaudeProvider = () => create_llm_provider(
+	'claude',
+	'Claude Haiku via OpenAI-compatible endpoint. Fast, concise AI-generated answers.',
+	'https://claude.ai',
+	() => config.ai_response.claude,
+);
 
-export const LlmCodexProvider = () =>
-	create_llm_search_provider(
-		'codex',
-		'OpenAI Codex/GPT with web search via llm-search service. Returns AI-generated answer grounded in real-time web results.',
-	);
+export const GeminiProvider = () => create_llm_provider(
+	'gemini',
+	'Gemini Flash via OpenAI-compatible endpoint. Fast AI-generated answers with Google Search grounding.',
+	'https://gemini.google.com',
+	() => config.ai_response.gemini,
+);
 
 export const registration = [
-	{ name: 'llm_claude' as const, key: () => config.ai_response.llm_search.base_url || undefined, factory: () => LlmClaudeProvider() },
-	{ name: 'llm_gemini' as const, key: () => config.ai_response.llm_search.base_url || undefined, factory: () => LlmGeminiProvider() },
-	{ name: 'llm_codex' as const, key: () => config.ai_response.llm_search.base_url || undefined, factory: () => LlmCodexProvider() },
+	{ name: 'chatgpt' as const, key: () => config.ai_response.chatgpt.base_url || undefined, factory: ChatGPTProvider },
+	{ name: 'claude' as const, key: () => config.ai_response.claude.base_url || undefined, factory: ClaudeProvider },
+	{ name: 'gemini' as const, key: () => config.ai_response.gemini.base_url || undefined, factory: GeminiProvider },
 ];

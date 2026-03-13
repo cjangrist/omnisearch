@@ -2,6 +2,9 @@
 // Populated per-request via initialize_config(env) on Cloudflare Workers
 
 import type { Env } from '../types/env.js';
+import { loggers } from '../common/logger.js';
+
+const logger = loggers.config();
 
 // REST auth keys (used directly by rest_search.ts)
 export let OPENWEBUI_API_KEY: string | undefined;
@@ -62,42 +65,64 @@ export const config = {
 		perplexity: {
 			api_key: undefined as string | undefined,
 			base_url: 'https://api.perplexity.ai',
-			timeout: 60000,
+			timeout: 180000,
 		},
 		kagi_fastgpt: {
 			api_key: undefined as string | undefined,
 			base_url: 'https://kagi.com/api/v0/fastgpt',
-			timeout: 30000,
+			timeout: 180000,
 		},
 		exa_answer: {
 			api_key: undefined as string | undefined,
 			base_url: 'https://api.exa.ai',
-			timeout: 30000,
+			timeout: 180000,
 		},
 		brave_answer: {
 			api_key: undefined as string | undefined,
 			base_url: 'https://api.search.brave.com/res/v1',
-			timeout: 60000,
+			timeout: 180000,
 		},
 		tavily_answer: {
 			api_key: undefined as string | undefined,
 			base_url: 'https://api.tavily.com',
-			timeout: 90000,
+			timeout: 180000,
 		},
 		you_search: {
 			api_key: undefined as string | undefined,
 			base_url: 'https://api.you.com/v1/agents/runs',
-			timeout: 90000,
+			timeout: 180000,
 		},
-		llm_search: {
+		chatgpt: {
+			api_key: '' as string,
 			base_url: '',
-			timeout: 60000,
+			model: 'codex/gpt-5.4',
+			timeout: 180000,
+		},
+		claude: {
+			api_key: '' as string,
+			base_url: '',
+			model: 'claude/haiku',
+			timeout: 180000,
+		},
+		gemini: {
+			api_key: '' as string,
+			base_url: '',
+			model: 'gemini/search-fast',
+			timeout: 180000,
+		},
+		gemini_grounded: {
+			api_key: undefined as string | undefined,
+			base_url: 'https://generativelanguage.googleapis.com/v1beta',
+			model: 'gemini-3.1-flash-lite-preview',
+			timeout: 180000,
 		},
 	},
 };
 
 // Populate config from Workers env bindings (called per-request)
 export const initialize_config = (env: Env) => {
+	logger.debug('Initializing configuration from environment bindings');
+
 	OPENWEBUI_API_KEY = env.OPENWEBUI_API_KEY;
 	OMNISEARCH_API_KEY = env.OMNISEARCH_API_KEY;
 
@@ -119,7 +144,29 @@ export const initialize_config = (env: Env) => {
 	config.ai_response.brave_answer.api_key = env.BRAVE_ANSWER_API_KEY;
 	config.ai_response.tavily_answer.api_key = env.TAVILY_API_KEY;
 	config.ai_response.you_search.api_key = env.YOU_API_KEY;
-	config.ai_response.llm_search.base_url = env.LLM_SEARCH_BASE_URL ?? '';
+	// LLM search providers (ChatGPT/Claude/Gemini via OpenAI-compatible endpoint)
+	if (env.LLM_SEARCH_BASE_URL) {
+		config.ai_response.chatgpt.base_url = env.LLM_SEARCH_BASE_URL;
+		config.ai_response.claude.base_url = env.LLM_SEARCH_BASE_URL;
+		config.ai_response.gemini.base_url = env.LLM_SEARCH_BASE_URL;
+	}
+	if (env.LLM_SEARCH_CHATGPT_MODEL) {
+		config.ai_response.chatgpt.model = env.LLM_SEARCH_CHATGPT_MODEL;
+	}
+	if (env.LLM_SEARCH_CLAUDE_MODEL) {
+		config.ai_response.claude.model = env.LLM_SEARCH_CLAUDE_MODEL;
+	}
+	if (env.LLM_SEARCH_GEMINI_MODEL) {
+		config.ai_response.gemini.model = env.LLM_SEARCH_GEMINI_MODEL;
+	}
+
+	// Gemini Grounded (native Gemini API with URL context)
+	config.ai_response.gemini_grounded.api_key = env.GEMINI_GROUNDED_API_KEY;
+	if (env.GEMINI_GROUNDED_MODEL) {
+		config.ai_response.gemini_grounded.model = env.GEMINI_GROUNDED_MODEL;
+	}
+
+	logger.debug('Configuration initialized successfully');
 };
 
 // Validate environment variables and log availability
@@ -127,20 +174,34 @@ export const validate_config = () => {
 	const all_keys: Array<[string, string | undefined]> = [
 		...Object.entries(config.search).map(([name, c]) => [`search.${name}`, c.api_key] as [string, string | undefined]),
 		...Object.entries(config.ai_response)
-			.filter(([name]) => name !== 'llm_search')
+			.filter(([name]) => !['chatgpt', 'claude', 'gemini', 'gemini_grounded'].includes(name))
 			.map(([name, c]) => [`ai.${name}`, (c as { api_key?: string }).api_key] as [string, string | undefined]),
-		['ai.llm_search', config.ai_response.llm_search.base_url || undefined],
+		['ai.chatgpt', config.ai_response.chatgpt.base_url || undefined],
+		['ai.claude', config.ai_response.claude.base_url || undefined],
+		['ai.gemini', config.ai_response.gemini.base_url || undefined],
+		['ai.gemini_grounded', config.ai_response.gemini_grounded.api_key || undefined],
 	];
 
 	const available = all_keys.filter(([, v]) => v).map(([n]) => n);
 	const missing = all_keys.filter(([, v]) => !v).map(([n]) => n);
 
 	if (available.length > 0) {
-		console.error(`Found keys for: ${available.join(', ')}`);
+		logger.info('API keys configured', {
+			op: 'config_validation',
+			available_count: available.length,
+			available_providers: available,
+		});
 	} else {
-		console.error('Warning: No API keys found. No providers will be available.');
+		logger.warn('No API keys found - no providers will be available', {
+			op: 'config_validation',
+		});
 	}
+
 	if (missing.length > 0) {
-		console.warn(`Missing keys for: ${missing.join(', ')}`);
+		logger.info('Optional providers not configured', {
+			op: 'config_validation',
+			missing_count: missing.length,
+			missing_providers: missing,
+		});
 	}
 };
