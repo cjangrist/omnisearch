@@ -9,7 +9,7 @@ export const setup_handlers = (server: McpServer) => {
 		'provider-status',
 		'omnisearch://providers/status',
 		{
-			description: 'Current status of all search providers',
+			description: 'Current status of all providers (search, AI response, fetch)',
 			mimeType: 'application/json',
 		},
 		async (uri) => {
@@ -26,13 +26,16 @@ export const setup_handlers = (server: McpServer) => {
 									ai_response: Array.from(
 										active_providers.ai_response,
 									),
+									fetch: Array.from(active_providers.fetch),
 								},
 								available_count: {
 									search: active_providers.search.size,
 									ai_response: active_providers.ai_response.size,
+									fetch: active_providers.fetch.size,
 									total:
 										active_providers.search.size +
-										active_providers.ai_response.size,
+										active_providers.ai_response.size +
+										active_providers.fetch.size,
 								},
 							},
 							null,
@@ -58,7 +61,8 @@ export const setup_handlers = (server: McpServer) => {
 			// Check if provider is available
 			const isAvailable =
 				active_providers.search.has(providerName) ||
-				active_providers.ai_response.has(providerName);
+				active_providers.ai_response.has(providerName) ||
+				active_providers.fetch.has(providerName);
 
 			if (!isAvailable) {
 				throw new Error(

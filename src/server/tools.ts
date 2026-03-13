@@ -9,28 +9,41 @@ import type {
 import type {
 	UnifiedAISearchProvider,
 } from '../providers/unified/ai_search.js';
+import type {
+	UnifiedFetchProvider,
+} from '../providers/unified/fetch.js';
 import { run_web_search_fanout, truncate_web_results, type FanoutResult } from './web_search_fanout.js';
 import { run_answer_fanout } from './answer_orchestrator.js';
+import { run_fetch_race } from './fetch_orchestrator.js';
+import { type FetchProviderName } from '../providers/unified/fetch.js';
 
 // Populated by initialize_providers() with individual provider names (tavily, brave, etc.)
 export const active_providers = {
 	search: new Set<string>(),
 	ai_response: new Set<string>(),
+	fetch: new Set<string>(),
 };
 
 class ToolRegistry {
 	private web_search_provider?: UnifiedWebSearchProvider;
 	private ai_search_provider?: UnifiedAISearchProvider;
+	private fetch_provider?: UnifiedFetchProvider;
 
 	get_web_search_provider() {
 		return this.web_search_provider;
 	}
 
+	get_fetch_provider() {
+		return this.fetch_provider;
+	}
+
 	reset() {
 		this.web_search_provider = undefined;
 		this.ai_search_provider = undefined;
+		this.fetch_provider = undefined;
 		active_providers.search.clear();
 		active_providers.ai_response.clear();
+		active_providers.fetch.clear();
 	}
 
 	register_web_search_provider(provider: UnifiedWebSearchProvider) {
@@ -41,12 +54,19 @@ class ToolRegistry {
 		this.ai_search_provider = provider;
 	}
 
+	register_fetch_provider(provider: UnifiedFetchProvider) {
+		this.fetch_provider = provider;
+	}
+
 	setup_tool_handlers(server: McpServer) {
 		if (this.web_search_provider) {
 			this.register_web_search_tool(server, this.web_search_provider);
 		}
 		if (this.ai_search_provider) {
 			this.register_answer_tool(server, this.ai_search_provider, this.web_search_provider);
+		}
+		if (this.fetch_provider) {
+			this.register_fetch_tool(server, this.fetch_provider);
 		}
 	}
 
@@ -137,6 +157,49 @@ class ToolRegistry {
 		);
 	}
 
+	private register_fetch_tool(server: McpServer, fetch_ref: UnifiedFetchProvider) {
+		server.registerTool(
+			'fetch',
+			{
+				description: `Fetch a URL's content as clean markdown. Uses Tavily by default. Optionally specify a different provider. Use this when you need the full text content of a specific webpage.`,
+				inputSchema: {
+					url: z.string().url().describe('The URL to fetch'),
+					provider: z.enum(['tavily', 'firecrawl', 'jina', 'you', 'brightdata', 'linkup', 'diffbot', 'sociavault', 'spider', 'scrapfly', 'scrapegraphai', 'scrapedo', 'scrapeless', 'opengraph', 'scrapingbee', 'scraperapi', 'zyte', 'scrapingant', 'oxylabs', 'olostep', 'decodo', 'scrappey', 'leadmagic', 'cloudflare_browser']).optional()
+						.describe('Specific provider to use (default: tavily).'),
+				},
+				outputSchema: {
+					url: z.string(),
+					title: z.string(),
+					content: z.string(),
+					source_provider: z.string(),
+					total_duration_ms: z.number(),
+					metadata: z.record(z.string(), z.unknown()).optional(),
+				},
+			},
+			async ({ url, provider }) => {
+				try {
+					const result = await run_fetch_race(fetch_ref, url, {
+						provider: provider as FetchProviderName | undefined,
+					});
+					const response = {
+						url: result.result.url,
+						title: result.result.title,
+						content: result.result.content,
+						source_provider: result.provider_used,
+						total_duration_ms: result.total_duration_ms,
+						metadata: result.result.metadata,
+					};
+					return {
+						structuredContent: response as Record<string, unknown>,
+						content: [{ type: 'text' as const, text: JSON.stringify(response, null, 2) }],
+					};
+				} catch (error) {
+					return this.format_error(error as Error);
+				}
+			},
+		);
+	}
+
 	private format_web_search_response(query: string, result: FanoutResult, include_snippets?: boolean) {
 		const { results: truncated_results, truncation } = truncate_web_results(result.web_results);
 		const web_results = (include_snippets ?? true)
@@ -170,7 +233,9 @@ class ToolRegistry {
 const registry = new ToolRegistry();
 
 export const get_web_search_provider = () => registry.get_web_search_provider();
+export const get_fetch_provider = () => registry.get_fetch_provider();
 export const reset_registry = () => { registry.reset(); };
 export const register_tools = (server: McpServer) => { registry.setup_tool_handlers(server); };
 export const register_web_search_provider = (provider: UnifiedWebSearchProvider) => { registry.register_web_search_provider(provider); };
 export const register_ai_search_provider = (provider: UnifiedAISearchProvider) => { registry.register_ai_search_provider(provider); };
+export const register_fetch_provider = (provider: UnifiedFetchProvider) => { registry.register_fetch_provider(provider); };

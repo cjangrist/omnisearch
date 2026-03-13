@@ -7,6 +7,7 @@ import { initialize_providers } from './providers/index.js';
 import { register_tools } from './server/tools.js';
 import { setup_handlers } from './server/handlers.js';
 import { handle_rest_search } from './server/rest_search.js';
+import { handle_rest_fetch } from './server/rest_fetch.js';
 import { loggers } from './common/logger.js';
 import type { Env } from './types/env.js';
 
@@ -100,6 +101,35 @@ export default {
 			}
 
 			const response = await handle_rest_search(request);
+
+			const duration = Date.now() - start_time;
+			logger.response(request.method, url.pathname, response.status, duration, {
+				request_id,
+			});
+
+			return add_cors_headers(response);
+		}
+
+		// REST /fetch endpoint
+		if (request.method === 'POST' && url.pathname === '/fetch') {
+			logger.info('Handling REST fetch request', {
+				op: 'rest_fetch',
+				request_id,
+			});
+
+			try {
+				validate_config();
+				initialize_providers();
+			} catch (err) {
+				logger.error('Provider initialization failed', {
+					op: 'provider_init',
+					request_id,
+					error: err instanceof Error ? err.message : String(err),
+				});
+				return Response.json({ error: 'Internal server error' }, { status: 500 });
+			}
+
+			const response = await handle_rest_fetch(request);
 
 			const duration = Date.now() - start_time;
 			logger.response(request.method, url.pathname, response.status, duration, {

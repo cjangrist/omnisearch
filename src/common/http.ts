@@ -4,7 +4,7 @@ import { handle_rate_limit } from './utils.js';
 
 const logger = loggers.http();
 
-interface HttpJsonOptions extends RequestInit {
+interface HttpOptions extends RequestInit {
 	expectedStatuses?: number[];
 }
 
@@ -19,16 +19,35 @@ const tryParseJson = (text: string) => {
 
 const MAX_RESPONSE_BYTES = 5 * 1024 * 1024; // 5 MB guard
 
-export const http_json = async <T = unknown>(
+const SENSITIVE_PARAMS = new Set(['api_key', 'key', 'token', 'app_id', 'x-api-key', 'apikey']);
+
+// Redact sensitive query params before logging
+const sanitize_url = (raw_url: string): string => {
+	try {
+		const u = new URL(raw_url);
+		for (const key of u.searchParams.keys()) {
+			if (SENSITIVE_PARAMS.has(key.toLowerCase())) {
+				u.searchParams.set(key, '[REDACTED]');
+			}
+		}
+		return u.toString().slice(0, 200);
+	} catch {
+		return raw_url.slice(0, 200);
+	}
+};
+
+// Shared core: fetch + timing + size guard + error handling + logging
+const http_core = async (
 	provider: string,
 	url: string,
-	options: HttpJsonOptions = {},
-): Promise<T> => {
+	options: HttpOptions = {},
+): Promise<{ raw: string; status: number }> => {
+	const request_start = Date.now();
 	logger.debug('HTTP request', {
 		op: 'http_request',
 		provider,
 		method: options.method ?? 'GET',
-		url: url.slice(0, 200),
+		url: sanitize_url(url),
 	});
 
 	const res = await fetch(url, options);
@@ -45,20 +64,18 @@ export const http_json = async <T = unknown>(
 		throw new ProviderError(ErrorType.API_ERROR, `Response too large (${content_length} bytes)`, provider);
 	}
 
-	const raw_full = await res.text();
+	const raw = await res.text();
 
-	if (raw_full.length > MAX_RESPONSE_BYTES) {
+	if (raw.length > MAX_RESPONSE_BYTES) {
 		logger.error('Response too large', {
 			op: 'http_response',
 			provider,
-			response_length: raw_full.length,
+			response_length: raw.length,
 			max_size: MAX_RESPONSE_BYTES,
 			status: res.status,
 		});
-		throw new ProviderError(ErrorType.API_ERROR, `Response too large (${raw_full.length} chars)`, provider);
+		throw new ProviderError(ErrorType.API_ERROR, `Response too large (${raw.length} chars)`, provider);
 	}
-
-	const body = tryParseJson(raw_full);
 
 	const okOrExpected =
 		res.ok ||
@@ -66,7 +83,7 @@ export const http_json = async <T = unknown>(
 			options.expectedStatuses.includes(res.status));
 
 	if (!okOrExpected) {
-		// Sanitize: only use structured error fields from JSON, never raw response body
+		const body = tryParseJson(raw);
 		const safe_message =
 			(body && typeof (body.message || body.error || body.detail) === 'string')
 				? (body.message || body.error || body.detail)
@@ -82,43 +99,50 @@ export const http_json = async <T = unknown>(
 
 		switch (res.status) {
 			case 401:
-				throw new ProviderError(
-					ErrorType.API_ERROR,
-					'Invalid API key',
-					provider,
-				);
+				throw new ProviderError(ErrorType.API_ERROR, 'Invalid API key', provider);
 			case 403:
-				throw new ProviderError(
-					ErrorType.API_ERROR,
-					'API key does not have access to this endpoint',
-					provider,
-				);
+				throw new ProviderError(ErrorType.API_ERROR, 'API key does not have access to this endpoint', provider);
 			case 429:
 				handle_rate_limit(provider);
-				break; // handle_rate_limit always throws, but break for safety
+				break;
 			default:
 				if (res.status >= 500) {
-					throw new ProviderError(
-						ErrorType.PROVIDER_ERROR,
-						`${provider} API internal error (${res.status}): ${safe_message}`,
-						provider,
-					);
+					throw new ProviderError(ErrorType.PROVIDER_ERROR, `${provider} API internal error (${res.status}): ${safe_message}`, provider);
 				}
-				throw new ProviderError(
-					ErrorType.API_ERROR,
-					`${provider} error (${res.status}): ${safe_message}`,
-					provider,
-				);
+				throw new ProviderError(ErrorType.API_ERROR, `${provider} error (${res.status}): ${safe_message}`, provider);
 		}
 	}
 
-	logger.debug('HTTP response received', {
+	const duration_ms = Date.now() - request_start;
+	logger.info('HTTP response', {
 		op: 'http_response',
 		provider,
 		status: res.status,
-		content_length: raw_full.length,
+		duration_ms,
+		content_length: raw.length,
 	});
 
+	return { raw, status: res.status };
+};
+
+// Returns parsed JSON
+export const http_json = async <T = unknown>(
+	provider: string,
+	url: string,
+	options: HttpOptions = {},
+): Promise<T> => {
+	const { raw } = await http_core(provider, url, options);
+	const body = tryParseJson(raw);
 	if (body !== undefined) return body as T;
 	throw new ProviderError(ErrorType.API_ERROR, `Invalid JSON response from ${provider}`, provider);
+};
+
+// Returns raw text (for providers that return HTML/markdown/plain text)
+export const http_text = async (
+	provider: string,
+	url: string,
+	options: HttpOptions = {},
+): Promise<string> => {
+	const { raw } = await http_core(provider, url, options);
+	return raw;
 };

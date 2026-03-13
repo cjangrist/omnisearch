@@ -175,14 +175,15 @@ export const loggers = {
 	worker: () => new Logger('worker'),
 	config: () => new Logger('config'),
 	providers: () => new Logger('providers'),
-	search: (provider?: string) => new Logger('search', undefined),
-	aiResponse: (provider?: string) => new Logger('ai_response', undefined),
+	search: (provider?: string) => new Logger(provider ? `search:${provider}` : 'search'),
+	aiResponse: (provider?: string) => new Logger(provider ? `ai_response:${provider}` : 'ai_response'),
 	server: () => new Logger('server'),
 	rest: () => new Logger('rest_api'),
 	mcp: () => new Logger('mcp'),
 	rrf: () => new Logger('rrf_ranking'),
 	snippets: () => new Logger('snippet_selector'),
 	http: () => new Logger('http_client'),
+	fetch: (provider?: string) => new Logger(provider ? `fetch:${provider}` : 'fetch'),
 };
 
 // Export Logger class for custom instances
