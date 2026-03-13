@@ -161,11 +161,11 @@ class ToolRegistry {
 		server.registerTool(
 			'fetch',
 			{
-				description: `Fetch a URL's content as clean markdown. Uses Tavily by default. Optionally specify a different provider. Use this when you need the full text content of a specific webpage.`,
+				description: `Fetch a URL's content as clean markdown. When no provider is specified, uses an automatic tiered waterfall: tries Tavily first, then escalates through Firecrawl, parallel groups (Linkup+CF Browser, Diffbot+Olostep, ScrapFly+Scrape.do+Decodo), Zyte, Bright Data, and remaining providers — stopping at the first success. Social media URLs (TikTok, Instagram, YouTube, LinkedIn, etc.) are automatically routed to SociaVault. Specify a provider to bypass the waterfall.`,
 				inputSchema: {
 					url: z.string().url().describe('The URL to fetch'),
 					provider: z.enum(['tavily', 'firecrawl', 'jina', 'you', 'brightdata', 'linkup', 'diffbot', 'sociavault', 'spider', 'scrapfly', 'scrapegraphai', 'scrapedo', 'scrapeless', 'opengraph', 'scrapingbee', 'scraperapi', 'zyte', 'scrapingant', 'oxylabs', 'olostep', 'decodo', 'scrappey', 'leadmagic', 'cloudflare_browser']).optional()
-						.describe('Specific provider to use (default: tavily).'),
+						.describe('Specific provider (omit for automatic waterfall).'),
 				},
 				outputSchema: {
 					url: z.string(),

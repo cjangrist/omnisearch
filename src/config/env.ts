@@ -241,6 +241,16 @@ export const config = {
 			api_key: undefined as string | undefined,
 			timeout: 45000,
 		},
+		serpapi: {
+			api_key: undefined as string | undefined,
+			base_url: 'https://serpapi.com/search.json',
+			timeout: 30000,
+		},
+		supadata: {
+			api_key: undefined as string | undefined,
+			base_url: 'https://api.supadata.ai/v1',
+			timeout: 60000,
+		},
 	},
 	fetch_retry: {
 		max_retries: 2,
@@ -328,6 +338,8 @@ export const initialize_config = (env: Env) => {
 	config.fetch.cloudflare_browser.account_id = env.CLOUDFLARE_ACCOUNT_ID;
 	config.fetch.cloudflare_browser.email = env.CLOUDFLARE_EMAIL;
 	config.fetch.cloudflare_browser.api_key = env.CLOUDFLARE_API_KEY;
+	config.fetch.serpapi.api_key = env.SERPAPI_API_KEY;
+	config.fetch.supadata.api_key = env.SUPADATA_API_KEY;
 
 	// Fetch retry/timeout tuning
 	if (env.FETCH_MAX_RETRIES) config.fetch_retry.max_retries = parseInt(env.FETCH_MAX_RETRIES, 10);

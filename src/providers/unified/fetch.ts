@@ -32,6 +32,8 @@ import { DecodoFetchProvider, registration as decodo_reg } from '../fetch/decodo
 import { ScrappeyFetchProvider, registration as scrappey_reg } from '../fetch/scrappey/index.js';
 import { LeadMagicFetchProvider, registration as leadmagic_reg } from '../fetch/leadmagic/index.js';
 import { CloudflareBrowserFetchProvider, registration as cloudflare_browser_reg } from '../fetch/cloudflare_browser/index.js';
+import { SerpapiFetchProvider, registration as serpapi_reg } from '../fetch/serpapi/index.js';
+import { SupadataFetchProvider, registration as supadata_reg } from '../fetch/supadata/index.js';
 
 // ─── ADD ONE LINE HERE TO REGISTER A NEW FETCH PROVIDER ─────────────
 const PROVIDERS = [
@@ -59,6 +61,8 @@ const PROVIDERS = [
 	{ name: 'scrappey', ...scrappey_reg, factory: () => new ScrappeyFetchProvider() },
 	{ name: 'leadmagic', ...leadmagic_reg, factory: () => new LeadMagicFetchProvider() },
 	{ name: 'cloudflare_browser', ...cloudflare_browser_reg, factory: () => new CloudflareBrowserFetchProvider() },
+	{ name: 'serpapi', ...serpapi_reg, factory: () => new SerpapiFetchProvider() },
+	{ name: 'supadata', ...supadata_reg, factory: () => new SupadataFetchProvider() },
 ] as const;
 // ─────────────────────────────────────────────────────────────────────
 

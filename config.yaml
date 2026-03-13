@@ -1,0 +1,66 @@
+# Fetch Waterfall Configuration
+#
+# Executed top-to-bottom. Unconfigured providers (no API key) are skipped.
+# Parallel steps race providers, pick longest content. Sequential tries one-by-one.
+# Runtime mirror: src/server/fetch_orchestrator.ts — update TS when editing this file.
+
+breakers:
+  youtube:
+    provider: supadata
+    domains: [youtube.com, youtu.be]
+
+  social_media:
+    provider: sociavault
+    domains:
+      - tiktok.com
+      - instagram.com
+      - youtube.com
+      - youtu.be
+      - linkedin.com
+      - facebook.com
+      - fb.com
+      - twitter.com
+      - x.com
+      - pinterest.com
+      - reddit.com
+      - threads.net
+      - snapchat.com
+
+waterfall:
+  - solo: tavily
+  - solo: firecrawl
+  - parallel: [linkup, cloudflare_browser]
+  - parallel: [diffbot, olostep]
+  - parallel: [scrapfly, scrapedo, decodo]
+  - solo: zyte
+  - solo: brightdata
+  - sequential:
+      - jina
+      - spider
+      - you
+      - scrapeless
+      - scrapingbee
+      - scrapegraphai
+      - scrappey
+      - scrapingant
+      - oxylabs
+      - scraperapi
+      - leadmagic
+      - opengraph
+
+failure:
+  min_content_chars: 200
+  challenge_patterns:
+    - cf-browser-verification
+    - challenge-platform
+    - captcha
+    - just a moment
+    - ray id
+    - checking your browser
+    - access denied
+    - enable javascript and cookies
+    - please turn javascript on
+    - one more step
+    - "[Chrome](https://www.google.com/chrome/"
+    - does not have access to this endpoint
+  http_codes: [403, 429, 503]
