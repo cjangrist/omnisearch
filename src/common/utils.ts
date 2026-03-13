@@ -78,14 +78,25 @@ export const create_error_response = (
 	};
 };
 
+export interface RetryOptions {
+	max_retries?: number;
+	min_timeout_ms?: number;
+	max_timeout_ms?: number;
+}
+
 export const retry_with_backoff = async <T>(
 	fn: () => Promise<T>,
-	max_retries: number = 3,
+	options?: number | RetryOptions,
 ): Promise<T> => {
+	// Accept legacy (number) or new (options object) signature
+	const opts: RetryOptions = typeof options === 'number'
+		? { max_retries: options }
+		: options ?? {};
+
 	return pRetry(fn, {
-		retries: max_retries,
-		minTimeout: 2000,
-		maxTimeout: 5000,
+		retries: opts.max_retries ?? 3,
+		minTimeout: opts.min_timeout_ms ?? 2000,
+		maxTimeout: opts.max_timeout_ms ?? 5000,
 		randomize: true,
 		shouldRetry: (error: unknown) => {
 			if (error instanceof ProviderError) {

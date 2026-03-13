@@ -23,6 +23,20 @@ export interface SearchProvider {
 	description: string;
 }
 
+export interface FetchResult {
+	url: string;
+	title: string;
+	content: string;
+	source_provider: string;
+	metadata?: Record<string, unknown>;
+}
+
+export interface FetchProvider {
+	fetch_url(url: string): Promise<FetchResult>;
+	name: string;
+	description: string;
+}
+
 // Error types
 export enum ErrorType {
 	API_ERROR = 'API_ERROR',

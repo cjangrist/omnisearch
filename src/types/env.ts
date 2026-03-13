@@ -27,6 +27,38 @@ export interface Env {
 	LLM_SEARCH_CLAUDE_MODEL?: string;
 	LLM_SEARCH_GEMINI_MODEL?: string;
 
+	// Fetch-only provider API keys
+	JINA_API_KEY?: string;
+	BRIGHT_DATA_API_KEY?: string;
+	BRIGHT_DATA_ZONE?: string;
+	DIFFBOT_TOKEN?: string;
+	SOCIAVAULT_API_KEY?: string;
+	SPIDER_CLOUD_API_TOKEN?: string;
+	SCRAPFLY_API_KEY?: string;
+	SCRAPEGRAPHAI_API_KEY?: string;
+	SCRAPE_DO_API_TOKEN?: string;
+	SCRAPELESS_API_KEY?: string;
+	OPENGRAPH_IO_API_KEY?: string;
+	SCRAPINGBEE_API_KEY?: string;
+	SCRAPERAPI_API_KEY?: string;
+	ZYTE_API_KEY?: string;
+	SCRAPINGANT_API_KEY?: string;
+	OXYLABS_WEB_SCRAPER_USERNAME?: string;
+	OXYLABS_WEB_SCRAPER_PASSWORD?: string;
+	OLOSTEP_API_KEY?: string;
+	DECODO_WEB_SCRAPING_API_KEY?: string;
+	SCRAPPEY_API_KEY?: string;
+	LEADMAGIC_API_KEY?: string;
+	CLOUDFLARE_ACCOUNT_ID?: string;
+	CLOUDFLARE_EMAIL?: string;
+	CLOUDFLARE_API_KEY?: string;
+
+	// Fetch retry/timeout tuning
+	FETCH_MAX_RETRIES?: string;
+	FETCH_RETRY_MIN_TIMEOUT_MS?: string;
+	FETCH_RETRY_MAX_TIMEOUT_MS?: string;
+	FETCH_TIMEOUT_MS?: string;
+
 	// REST auth
 	OPENWEBUI_API_KEY?: string;
 	OMNISEARCH_API_KEY?: string;
