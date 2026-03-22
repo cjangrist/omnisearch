@@ -6,6 +6,7 @@ import {
 } from '../../../common/types.js';
 import {
 	handle_provider_error,
+	make_signal,
 	validate_api_key,
 } from '../../../common/utils.js';
 import { config } from '../../../config/env.js';
@@ -97,7 +98,7 @@ export class ExaSearchProvider implements SearchProvider {
 						'Content-Type': 'application/json',
 					},
 					body: JSON.stringify(request_body),
-					signal: AbortSignal.timeout(config.search.exa.timeout),
+					signal: make_signal(config.search.exa.timeout, params.signal),
 				},
 			);
 

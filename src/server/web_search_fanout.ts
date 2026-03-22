@@ -52,7 +52,7 @@ export interface FanoutResult {
 }
 
 interface SearchDispatcher {
-	search: (params: { query: string; provider: WebSearchProvider; limit?: number }) => Promise<SearchResult[]>;
+	search: (params: { query: string; provider: WebSearchProvider; limit?: number; signal?: AbortSignal }) => Promise<SearchResult[]>;
 }
 
 const dispatch_to_providers = async (
@@ -61,6 +61,7 @@ const dispatch_to_providers = async (
 	active: Array<{ name: string }>,
 	per_provider_limit: number,
 	timeout_ms?: number,
+	signal?: AbortSignal,
 ): Promise<{
 	results_by_provider: Map<string, SearchResult[]>;
 	providers_succeeded: Array<{ provider: string; duration_ms: number }>;
@@ -86,7 +87,7 @@ const dispatch_to_providers = async (
 			provider.debug('Starting search', { op: 'provider_search_start' });
 
 			const results = await retry_with_backoff(
-				() => web_provider.search({ query, provider: p.name as WebSearchProvider, limit: per_provider_limit }),
+				() => web_provider.search({ query, provider: p.name as WebSearchProvider, limit: per_provider_limit, signal }),
 				1,
 			);
 
@@ -157,7 +158,7 @@ const dispatch_to_providers = async (
 export const run_web_search_fanout = async (
 	web_provider: SearchDispatcher,
 	query: string,
-	options?: { skip_quality_filter?: boolean; limit?: number; timeout_ms?: number },
+	options?: { skip_quality_filter?: boolean; limit?: number; timeout_ms?: number; signal?: AbortSignal },
 ): Promise<FanoutResult> => {
 	// Return cached result if available (deduplicates gemini-grounded web search inside answer fanout)
 	const cache_key = make_cache_key(query, options);
@@ -185,7 +186,7 @@ export const run_web_search_fanout = async (
 
 	const fanout_start = Date.now();
 	const { results_by_provider, providers_succeeded, providers_failed } =
-		await dispatch_to_providers(web_provider, query, active, per_provider_limit, options?.timeout_ms);
+		await dispatch_to_providers(web_provider, query, active, per_provider_limit, options?.timeout_ms, options?.signal);
 
 	const dispatch_duration = Date.now() - fanout_start;
 

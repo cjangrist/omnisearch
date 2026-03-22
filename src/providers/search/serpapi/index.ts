@@ -6,6 +6,7 @@ import {
 } from '../../../common/types.js';
 import {
 	handle_provider_error,
+	make_signal,
 	validate_api_key,
 } from '../../../common/utils.js';
 import { config } from '../../../config/env.js';
@@ -53,7 +54,7 @@ export class SerpApiSearchProvider implements SearchProvider {
 				`${config.search.serpapi.base_url}?${query_params}`,
 				{
 					method: 'GET',
-					signal: AbortSignal.timeout(config.search.serpapi.timeout),
+					signal: make_signal(config.search.serpapi.timeout, params.signal),
 				},
 			);
 

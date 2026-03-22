@@ -6,6 +6,7 @@ import {
 } from '../../../common/types.js';
 import {
 	handle_provider_error,
+	make_signal,
 	validate_api_key,
 } from '../../../common/utils.js';
 import {
@@ -88,7 +89,7 @@ export class KagiSearchProvider implements SearchProvider {
 						Authorization: `Bot ${api_key}`,
 						Accept: 'application/json',
 					},
-					signal: AbortSignal.timeout(config.search.kagi.timeout),
+					signal: make_signal(config.search.kagi.timeout, params.signal),
 				},
 			);
 
