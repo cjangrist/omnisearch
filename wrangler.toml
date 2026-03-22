@@ -10,6 +10,10 @@ enabled = true
 name = "OmnisearchMCP"
 class_name = "OmnisearchMCP"
 
+[[kv_namespaces]]
+binding = "CACHE"
+id = "d8b1130bed234c308a15316a5dfc15a8"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["OmnisearchMCP"]

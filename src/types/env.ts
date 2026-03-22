@@ -60,6 +60,9 @@ export interface Env {
 	OPENWEBUI_API_KEY?: string;
 	OMNISEARCH_API_KEY?: string;
 
+	// KV namespace for caching search and fetch results (24h TTL)
+	CACHE: KVNamespace;
+
 	// Durable Object namespace for the stateful MCP agent
 	OmnisearchMCP: DurableObjectNamespace;
 }
