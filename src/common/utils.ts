@@ -3,6 +3,17 @@
 import pRetry from 'p-retry';
 import { ErrorType, ProviderError } from './types.js';
 
+export const timing_safe_equal = (a: string, b: string): boolean => {
+	const encoder = new TextEncoder();
+	const a_buf = encoder.encode(a);
+	const b_buf = encoder.encode(b);
+	if (a_buf.byteLength !== b_buf.byteLength) return false;
+	return crypto.subtle.timingSafeEqual(a_buf, b_buf);
+};
+
+export const sanitize_for_log = (s: string): string =>
+	s.replace(/[\x00-\x1F\x7F]/g, '').slice(0, 200);
+
 const normalize_api_key = (raw: string): string => {
 	const trimmed = raw.trim();
 	return trimmed.replace(/^(['"])(.*)\1$/, '$2');

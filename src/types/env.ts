@@ -23,6 +23,7 @@ export interface Env {
 
 	// LLM search (ChatGPT/Claude/Gemini via OpenAI-compatible endpoint)
 	LLM_SEARCH_BASE_URL?: string;
+	LLM_SEARCH_API_KEY?: string;
 	LLM_SEARCH_CHATGPT_MODEL?: string;
 	LLM_SEARCH_CLAUDE_MODEL?: string;
 	LLM_SEARCH_GEMINI_MODEL?: string;
@@ -54,12 +55,6 @@ export interface Env {
 	CLOUDFLARE_API_KEY?: string;
 
 	SUPADATA_API_KEY?: string;
-
-	// Fetch retry/timeout tuning
-	FETCH_MAX_RETRIES?: string;
-	FETCH_RETRY_MIN_TIMEOUT_MS?: string;
-	FETCH_RETRY_MAX_TIMEOUT_MS?: string;
-	FETCH_TIMEOUT_MS?: string;
 
 	// REST auth
 	OPENWEBUI_API_KEY?: string;

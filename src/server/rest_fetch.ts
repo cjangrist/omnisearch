@@ -5,23 +5,13 @@
 
 import { ErrorType, ProviderError } from '../common/types.js';
 import { loggers } from '../common/logger.js';
+import { timing_safe_equal, sanitize_for_log } from '../common/utils.js';
 import { get_fetch_provider } from './tools.js';
 import { run_fetch_race } from './fetch_orchestrator.js';
 import { get_active_fetch_providers, type FetchProviderName } from '../providers/unified/fetch.js';
 import { OPENWEBUI_API_KEY, OMNISEARCH_API_KEY } from '../config/env.js';
 
 const logger = loggers.rest();
-
-const sanitize_for_log = (s: string): string =>
-	s.replace(/[\x00-\x1F\x7F]/g, '').slice(0, 200);
-
-const timing_safe_equal = (a: string, b: string): boolean => {
-	const encoder = new TextEncoder();
-	const a_buf = encoder.encode(a);
-	const b_buf = encoder.encode(b);
-	if (a_buf.byteLength !== b_buf.byteLength) return false;
-	return crypto.subtle.timingSafeEqual(a_buf, b_buf);
-};
 
 export async function handle_rest_fetch(
 	request: Request,

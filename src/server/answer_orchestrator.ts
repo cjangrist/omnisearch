@@ -14,11 +14,6 @@ const logger = loggers.aiResponse();
 const GLOBAL_TIMEOUT_MS = 120_000; // 2 min hard deadline for the entire fanout
 const PROGRESS_INTERVAL_MS = 5_000;
 
-// Called every PROGRESS_INTERVAL_MS while providers are still running.
-// Used by the MCP tool handler to push SSE keepalive notifications.
-export type ProgressCallback = (completed: number, total: number, pending: string[]) => Promise<void>;
-
-
 interface ProviderTask {
 	name: string;
 	promise: Promise<SearchResult[]>;
@@ -109,7 +104,6 @@ const build_tasks = (
 
 const execute_tasks = async (
 	tasks: ProviderTask[],
-	on_progress?: ProgressCallback,
 ): Promise<{ answers: AnswerEntry[]; failed: FailedProvider[] }> => {
 	const answers: AnswerEntry[] = [];
 	const failed: FailedProvider[] = [];
@@ -160,7 +154,7 @@ const execute_tasks = async (
 		),
 	);
 
-	const progress_interval = setInterval(async () => {
+	const progress_interval = setInterval(() => {
 		const pending = tasks.filter((t) => !completed_set.has(t.name)).map((t) => t.name);
 		if (pending.length > 0) {
 			logger.debug('Waiting for providers', {
@@ -170,17 +164,6 @@ const execute_tasks = async (
 				done: Array.from(completed_set),
 				pending,
 			});
-			if (on_progress) {
-				try {
-					await on_progress(completed_count, total_count, pending);
-				} catch (cb_err) {
-					// Swallow — a dropped SSE connection must not crash the fanout
-					logger.warn('Progress callback error', {
-						op: 'progress_callback',
-						error: cb_err instanceof Error ? cb_err.message : String(cb_err),
-					});
-				}
-			}
 		}
 	}, PROGRESS_INTERVAL_MS);
 
@@ -228,7 +211,6 @@ export const run_answer_fanout = async (
 	ai_search_ref: UnifiedAISearchProvider,
 	web_search_ref: UnifiedWebSearchProvider | undefined,
 	query: string,
-	on_progress?: ProgressCallback,
 ): Promise<AnswerResult | null> => {
 	const tasks = build_tasks(ai_search_ref, web_search_ref, query);
 	if (tasks.length === 0) {
@@ -246,7 +228,7 @@ export const run_answer_fanout = async (
 		providers_count: tasks.length,
 	});
 
-	const { answers, failed } = await execute_tasks(tasks, on_progress);
+	const { answers, failed } = await execute_tasks(tasks);
 
 	const result: AnswerResult = {
 		query,

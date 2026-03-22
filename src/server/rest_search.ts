@@ -6,22 +6,12 @@
 
 import { ProviderError } from '../common/types.js';
 import { loggers } from '../common/logger.js';
+import { timing_safe_equal, sanitize_for_log } from '../common/utils.js';
 import { get_web_search_provider } from './tools.js';
 import { run_web_search_fanout } from './web_search_fanout.js';
 import { OPENWEBUI_API_KEY, OMNISEARCH_API_KEY } from '../config/env.js';
 
 const logger = loggers.rest();
-
-const sanitize_for_log = (s: string): string =>
-	s.replace(/[\x00-\x1F\x7F]/g, '').slice(0, 200);
-
-const timing_safe_equal = (a: string, b: string): boolean => {
-	const encoder = new TextEncoder();
-	const a_buf = encoder.encode(a);
-	const b_buf = encoder.encode(b);
-	if (a_buf.byteLength !== b_buf.byteLength) return false;
-	return crypto.subtle.timingSafeEqual(a_buf, b_buf);
-};
 
 export async function handle_rest_search(
 	request: Request,
@@ -125,7 +115,8 @@ export async function handle_rest_search(
 	}
 
 	let result;
-	const op = logger.startOp('search_fanout', {
+	logger.info('Starting search fanout', {
+		op: 'search_fanout',
 		provider: web_provider.name,
 		query: sanitize_for_log(query),
 	});
