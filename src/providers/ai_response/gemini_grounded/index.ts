@@ -74,34 +74,48 @@ export async function gemini_grounded_search(
 	const prompt = build_prompt(query, filtered_sources);
 
 	try {
-		const response = await http_json<GeminiGenerateContentResponse>(
-			PROVIDER_NAME,
-			`${cfg.base_url}/models/${cfg.model}:generateContent`,
-			{
-				method: 'POST',
-				headers: {
-					'x-goog-api-key': cfg.api_key,
-					'Content-Type': 'application/json',
-				},
-				body: JSON.stringify({
-					contents: [{ parts: [{ text: prompt }] }],
-					tools: [{ url_context: {} }],
-				}),
-				signal: make_signal(cfg.timeout, external_signal),
+		// Use raw fetch to inspect actual JSON field names from Gemini API
+		const api_url = `${cfg.base_url}/models/${cfg.model}:generateContent`;
+		const raw_res = await fetch(api_url, {
+			method: 'POST',
+			headers: {
+				'x-goog-api-key': cfg.api_key,
+				'Content-Type': 'application/json',
 			},
-		);
+			body: JSON.stringify({
+				contents: [{ parts: [{ text: prompt }] }],
+				tools: [{ url_context: {} }],
+			}),
+			signal: make_signal(cfg.timeout, external_signal),
+		});
+		const raw_json = await raw_res.text();
+		const response = JSON.parse(raw_json) as Record<string, unknown>;
 
-		const answer = response.candidates?.[0]?.content?.parts
-			?.map((p) => p.text)
-			.filter(Boolean)
-			.join('\n') ?? '';
+		// Extract candidate — inspect raw field names
+		const candidates = response.candidates as Array<Record<string, unknown>> | undefined;
+		const candidate = candidates?.[0];
+		const raw_keys = candidate ? Object.keys(candidate) : [];
 
-		const url_metadata = response.candidates?.[0]?.urlContextMetadata?.urlMetadata ?? [];
-		const fetched_urls = url_metadata
-			.filter((m) => m.urlRetrievalStatus === 'URL_RETRIEVAL_STATUS_SUCCESS')
-			.map((m) => m.retrievedUrl);
+		// Try both camelCase and snake_case field names
+		const content_obj = (candidate?.content ?? candidate?.['content']) as { parts?: Array<{ text?: string }> } | undefined;
+		const answer = content_obj?.parts?.map((p) => p.text).filter(Boolean).join('\n') ?? '';
 
-		const model = response.modelVersion || cfg.model;
+		// Try both naming conventions for url metadata
+		const url_ctx = (candidate?.urlContextMetadata ?? candidate?.url_context_metadata) as Record<string, unknown> | undefined;
+		const url_metadata_arr = (url_ctx?.urlMetadata ?? url_ctx?.url_metadata) as Array<Record<string, string>> | undefined ?? [];
+
+		const fetched_urls = url_metadata_arr
+			.filter((m) => (m.urlRetrievalStatus ?? m.url_retrieval_status) === 'URL_RETRIEVAL_STATUS_SUCCESS')
+			.map((m) => m.retrievedUrl ?? m.retrieved_url)
+			.filter(Boolean);
+
+		const model = (response.modelVersion ?? response.model_version ?? cfg.model) as string;
+
+		// Use Gemini-fetched URLs as citations if available, otherwise fall back to
+		// the web search sources we provided in the prompt (they ARE the grounding).
+		const citation_urls = fetched_urls.length > 0
+			? fetched_urls
+			: filtered_sources.map((s) => s.url).slice(0, 10);
 
 		const results: SearchResult[] = [
 			{
@@ -110,9 +124,14 @@ export async function gemini_grounded_search(
 				snippet: answer,
 				score: PRIMARY_SCORE,
 				source_provider: PROVIDER_NAME,
-				metadata: { model, urls_provided: filtered_sources.length, urls_fetched: fetched_urls.length },
+				metadata: {
+				model,
+				urls_provided: filtered_sources.length,
+				urls_fetched_by_gemini: fetched_urls.length,
+				citations_from: fetched_urls.length > 0 ? 'gemini_url_context' : 'web_search_fanout',
 			},
-			...fetched_urls.map((u) => ({
+			},
+			...citation_urls.map((u) => ({
 				title: new URL(u).hostname.replace(/^www\./, ''),
 				url: u,
 				snippet: `Source: ${u}`,
