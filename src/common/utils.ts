@@ -111,6 +111,7 @@ export interface RetryOptions {
 	max_retries?: number;
 	min_timeout_ms?: number;
 	max_timeout_ms?: number;
+	signal?: AbortSignal;
 }
 
 export const retry_with_backoff = async <T>(
@@ -127,6 +128,7 @@ export const retry_with_backoff = async <T>(
 		minTimeout: opts.min_timeout_ms ?? 2000,
 		maxTimeout: opts.max_timeout_ms ?? 5000,
 		randomize: true,
+		signal: opts.signal,
 		shouldRetry: (error: unknown) => {
 			if (error instanceof ProviderError) {
 				// Only retry transient provider errors — never auth, rate limit, or bad input

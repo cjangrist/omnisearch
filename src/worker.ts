@@ -327,6 +327,8 @@ async function handle_request(request: Request, env: Env, ctx: ExecutionContext,
 		if (url.pathname === '/mcp') {
 			try {
 				const response = await mcp_handler.fetch(request, env, ctx);
+				const duration = Date.now() - start_time;
+				logger.response(request.method, url.pathname, response.status, duration, { request_id });
 				if (
 					request.method === 'POST'
 					&& response.body

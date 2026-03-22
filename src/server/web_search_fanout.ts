@@ -93,7 +93,7 @@ const dispatch_to_providers = async (
 
 			const results = await retry_with_backoff(
 				() => web_provider.search({ query, provider: p.name as WebSearchProvider, limit: per_provider_limit, signal: combined_signal }),
-				1,
+				{ max_retries: 1, signal: combined_signal },
 			);
 
 			results_by_provider.set(p.name, results);
@@ -231,8 +231,10 @@ export const run_web_search_fanout = async (
 		web_results,
 	};
 
-	// Await KV write — prevents REST path from killing the promise after response is sent
-	await set_cached(cache_key, result);
+	// Only cache successful results — don't pin transient failures for 24h
+	if (providers_succeeded.length > 0) {
+		await set_cached(cache_key, result);
+	}
 	return result;
 };
 
