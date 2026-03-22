@@ -18,6 +18,7 @@ const KV_ANSWER_PREFIX = 'answer:';
 
 interface ProviderTask {
 	name: string;
+	started_at: number;
 	promise: Promise<SearchResult[]>;
 }
 
@@ -77,12 +78,14 @@ const build_tasks = (
 	// Retrying individual providers doubles worst-case latency (2x timeout + backoff).
 	const tasks: ProviderTask[] = get_active_ai_providers().map((ap) => ({
 		name: ap.name,
+		started_at: Date.now(),
 		promise: ai_search_ref.search({ query, provider: ap.name as AISearchProvider, signal }),
 	}));
 
 	if (web_search_ref && config.ai_response.gemini_grounded.api_key) {
 		tasks.push({
 			name: 'gemini-grounded',
+			started_at: Date.now(),
 			promise: (async () => {
 				const fanout = await run_web_search_fanout(web_search_ref, query, { signal, timeout_ms: 10_000 });
 				const sources = fanout.web_results.map((r) => ({
@@ -128,7 +131,7 @@ const execute_tasks = async (
 		task.promise.then(
 			(value) => {
 				if (is_done) return; // post-deadline — don't mutate arrays
-				const duration_ms = Date.now() - start_time;
+				const duration_ms = Date.now() - task.started_at;
 				completed_count++;
 				completed_set.add(task.name);
 				const entry = { ...build_answer_entry(task.name, value), duration_ms };
@@ -145,7 +148,7 @@ const execute_tasks = async (
 			},
 			(reason) => {
 				if (is_done) return; // post-deadline — don't mutate arrays
-				const duration_ms = Date.now() - start_time;
+				const duration_ms = Date.now() - task.started_at;
 				completed_count++;
 				completed_set.add(task.name);
 				const error_msg = reason instanceof Error ? reason.message : String(reason);
