@@ -5,3 +5,11 @@ compatibility_flags = ["nodejs_compat"]
 
 [observability]
 enabled = true
+
+[[durable_objects.bindings]]
+name = "OmnisearchMCP"
+class_name = "OmnisearchMCP"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["OmnisearchMCP"]
