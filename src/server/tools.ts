@@ -40,9 +40,6 @@ class ToolRegistry {
 		this.web_search_provider = undefined;
 		this.ai_search_provider = undefined;
 		this.fetch_provider = undefined;
-		active_providers.search.clear();
-		active_providers.ai_response.clear();
-		active_providers.fetch.clear();
 	}
 
 	register_web_search_provider(provider: UnifiedWebSearchProvider) {

@@ -8,7 +8,7 @@ import {
 	SearchProvider,
 	SearchResult,
 } from '../../../common/types.js';
-import { handle_provider_error } from '../../../common/utils.js';
+import { handle_provider_error, make_signal } from '../../../common/utils.js';
 import { config } from '../../../config/env.js';
 
 const PRIMARY_SCORE = 1.0;
@@ -58,7 +58,7 @@ function create_llm_provider(
 							model: cfg.model,
 							messages: [{ role: 'user', content: params.query }],
 						}),
-						signal: AbortSignal.timeout(cfg.timeout),
+						signal: make_signal(cfg.timeout, params.signal),
 					},
 				);
 

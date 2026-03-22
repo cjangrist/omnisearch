@@ -69,12 +69,13 @@ const build_tasks = (
 	ai_search_ref: UnifiedAISearchProvider,
 	web_search_ref: UnifiedWebSearchProvider | undefined,
 	query: string,
+	signal?: AbortSignal,
 ): ProviderTask[] => {
 	// No retry_with_backoff — the multi-provider fanout IS the redundancy strategy.
 	// Retrying individual providers doubles worst-case latency (2x timeout + backoff).
 	const tasks: ProviderTask[] = get_active_ai_providers().map((ap) => ({
 		name: ap.name,
-		promise: ai_search_ref.search({ query, provider: ap.name as AISearchProvider }),
+		promise: ai_search_ref.search({ query, provider: ap.name as AISearchProvider, signal }),
 	}));
 
 	if (web_search_ref && config.ai_response.gemini_grounded.api_key) {
@@ -86,7 +87,7 @@ const build_tasks = (
 					url: r.url,
 					snippets: r.snippets,
 				}));
-				return gemini_grounded_search(query, sources);
+				return gemini_grounded_search(query, sources, signal);
 			})(),
 		});
 	}
@@ -104,6 +105,7 @@ const build_tasks = (
 
 const execute_tasks = async (
 	tasks: ProviderTask[],
+	abort_controller?: AbortController,
 ): Promise<{ answers: AnswerEntry[]; failed: FailedProvider[] }> => {
 	const answers: AnswerEntry[] = [];
 	const failed: FailedProvider[] = [];
@@ -170,8 +172,15 @@ const execute_tasks = async (
 	try {
 		let timer_id: ReturnType<typeof setTimeout>;
 		const deadline = new Promise<void>((resolve) => { timer_id = setTimeout(resolve, GLOBAL_TIMEOUT_MS); });
-		await Promise.race([Promise.all(tracked), deadline]);
+		const winner = Promise.race([
+			Promise.all(tracked).then(() => 'all_done' as const),
+			deadline.then(() => 'deadline' as const),
+		]);
+		const result = await winner;
 		clearTimeout(timer_id!);
+		if (result === 'deadline' && abort_controller) {
+			abort_controller.abort();
+		}
 	} finally {
 		clearInterval(progress_interval);
 	}
@@ -212,7 +221,8 @@ export const run_answer_fanout = async (
 	web_search_ref: UnifiedWebSearchProvider | undefined,
 	query: string,
 ): Promise<AnswerResult | null> => {
-	const tasks = build_tasks(ai_search_ref, web_search_ref, query);
+	const abort_controller = new AbortController();
+	const tasks = build_tasks(ai_search_ref, web_search_ref, query, abort_controller.signal);
 	if (tasks.length === 0) {
 		logger.warn('No AI providers available for answer', {
 			op: 'answer_fanout',
@@ -228,7 +238,7 @@ export const run_answer_fanout = async (
 		providers_count: tasks.length,
 	});
 
-	const { answers, failed } = await execute_tasks(tasks);
+	const { answers, failed } = await execute_tasks(tasks, abort_controller);
 
 	const result: AnswerResult = {
 		query,

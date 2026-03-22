@@ -3,6 +3,13 @@
 import pRetry from 'p-retry';
 import { ErrorType, ProviderError } from './types.js';
 
+// Combine an external abort signal with a provider-level timeout into a single signal.
+// Returns the combined signal, or just the timeout if no external signal is provided.
+export const make_signal = (timeout_ms: number, external?: AbortSignal): AbortSignal =>
+	external
+		? AbortSignal.any([external, AbortSignal.timeout(timeout_ms)])
+		: AbortSignal.timeout(timeout_ms);
+
 export const timing_safe_equal = (a: string, b: string): boolean => {
 	const encoder = new TextEncoder();
 	const a_buf = encoder.encode(a);

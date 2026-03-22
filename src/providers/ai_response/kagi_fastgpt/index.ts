@@ -6,6 +6,7 @@ import {
 } from '../../../common/types.js';
 import {
 	handle_provider_error,
+	make_signal,
 	validate_api_key,
 } from '../../../common/utils.js';
 import { config } from '../../../config/env.js';
@@ -40,7 +41,7 @@ export class KagiFastGPTProvider implements SearchProvider {
 		'Quick AI-generated answers with citations, optimized for rapid response (900ms typical start time). Runs full search underneath for enriched answers.';
 
 	async search(params: BaseSearchParams): Promise<SearchResult[]> {
-		const response = await this.get_answer(params.query);
+		const response = await this.get_answer(params.query, { signal: params.signal });
 
 		const results: SearchResult[] = [];
 
@@ -82,7 +83,7 @@ export class KagiFastGPTProvider implements SearchProvider {
 
 	async get_answer(
 		query: string,
-		options: KagiFastGPTOptions = {},
+		options: KagiFastGPTOptions & { signal?: AbortSignal } = {},
 	): Promise<KagiFastGPTResponse> {
 		const api_key = validate_api_key(
 			config.ai_response.kagi_fastgpt.api_key,
@@ -111,9 +112,7 @@ export class KagiFastGPTProvider implements SearchProvider {
 						cache: final_options.cache,
 						web_search: final_options.web_search,
 					}),
-					signal: AbortSignal.timeout(
-						config.ai_response.kagi_fastgpt.timeout,
-					),
+					signal: make_signal(config.ai_response.kagi_fastgpt.timeout, options.signal),
 				},
 			);
 		} catch (error) {

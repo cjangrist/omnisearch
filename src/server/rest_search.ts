@@ -165,6 +165,16 @@ export async function handle_rest_search(
 		});
 	}
 
+	// All providers failed — return 502 instead of a misleading 200 with empty results
+	if (provider_names.length === 0 && failed_count > 0) {
+		const duration = Date.now() - start_time;
+		logger.response('POST', '/search', 502, duration, { failed_count });
+		return Response.json(
+			{ error: 'All search providers failed', failed_providers: result.providers_failed?.map((p) => p.provider) },
+			{ status: 502 },
+		);
+	}
+
 	const duration = Date.now() - start_time;
 	logger.response('POST', '/search', 200, duration, {
 		result_count: sorted.length,

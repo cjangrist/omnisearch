@@ -7,6 +7,7 @@ import {
 } from '../../../common/types.js';
 import {
 	handle_provider_error,
+	make_signal,
 	validate_api_key,
 } from '../../../common/utils.js';
 import { config } from '../../../config/env.js';
@@ -148,9 +149,7 @@ export class BraveAnswerProvider implements SearchProvider {
 						enable_citations: ENABLE_CITATIONS,
 						enable_research: ENABLE_RESEARCH,
 					}),
-					signal: AbortSignal.timeout(
-						config.ai_response.brave_answer.timeout,
-					),
+					signal: make_signal(config.ai_response.brave_answer.timeout, params.signal),
 				},
 			);
 

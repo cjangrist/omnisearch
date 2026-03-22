@@ -8,6 +8,7 @@ import {
 } from '../../../common/types.js';
 import {
 	handle_provider_error,
+	make_signal,
 	validate_api_key,
 } from '../../../common/utils.js';
 import { config } from '../../../config/env.js';
@@ -62,9 +63,7 @@ export class TavilyAnswerProvider implements SearchProvider {
 						chunks_per_source: DEFAULT_CHUNKS_PER_SOURCE,
 						topic: DEFAULT_TOPIC,
 					}),
-					signal: AbortSignal.timeout(
-						config.ai_response.tavily_answer.timeout,
-					),
+					signal: make_signal(config.ai_response.tavily_answer.timeout, params.signal),
 				},
 			);
 

@@ -60,10 +60,13 @@ const SSE_KEEPALIVE_INTERVAL_MS = 5_000;
 const SSE_PING = new TextEncoder().encode('event: ping\ndata: keepalive\n\n');
 
 const inject_sse_keepalive = (original: Response): Response => {
+	if (!original.body) return original;
+
 	const { readable, writable } = new TransformStream();
 	const writer = writable.getWriter();
-	const reader = original.body!.getReader();
+	const reader = original.body.getReader();
 	let closed = false;
+	let buffer = new Uint8Array(0);
 
 	const cleanup = () => {
 		if (closed) return;
@@ -73,17 +76,51 @@ const inject_sse_keepalive = (original: Response): Response => {
 		writer.close().catch(() => {});
 	};
 
+	// Find the first \n\n boundary in buf (end of a complete SSE event)
+	const find_event_boundary = (buf: Uint8Array): number => {
+		for (let i = 0; i < buf.length - 1; i++) {
+			if (buf[i] === 0x0a && buf[i + 1] === 0x0a) return i + 2;
+		}
+		return -1;
+	};
+
+	// Flush all complete SSE events from the buffer to the writer
+	const flush_complete_events = async () => {
+		let boundary: number;
+		while ((boundary = find_event_boundary(buffer)) !== -1) {
+			const event_bytes = buffer.slice(0, boundary);
+			buffer = buffer.slice(boundary);
+			await writer.write(event_bytes);
+		}
+	};
+
+	// Only inject keepalive between complete events (buffer empty = no partial event in flight)
 	const keepalive = setInterval(() => {
 		if (closed) return;
-		writer.write(SSE_PING).catch(cleanup);
+		if (buffer.length === 0) {
+			writer.write(SSE_PING).catch(cleanup);
+		}
 	}, SSE_KEEPALIVE_INTERVAL_MS);
 
 	const pump = async () => {
 		try {
 			for (;;) {
 				const { value, done } = await reader.read();
-				if (done) break;
-				await writer.write(value);
+				if (done) {
+					// Flush any remaining partial data (shouldn't happen with well-formed SSE)
+					if (buffer.length > 0) {
+						await writer.write(buffer);
+						buffer = new Uint8Array(0);
+					}
+					break;
+				}
+				// Append chunk to buffer
+				const merged = new Uint8Array(buffer.length + value.length);
+				merged.set(buffer);
+				merged.set(value, buffer.length);
+				buffer = merged;
+				// Write out all complete events
+				await flush_complete_events();
 			}
 		} finally {
 			cleanup();
@@ -118,16 +155,21 @@ export class OmnisearchMCP extends McpAgent<Env> {
 		},
 	);
 
-	private _initialized = false;
+	private _init_promise: Promise<void> | undefined;
 
 	async init(): Promise<void> {
-		if (this._initialized) return;
+		if (!this._init_promise) {
+			this._init_promise = this._do_init();
+		}
+		return this._init_promise;
+	}
+
+	private async _do_init(): Promise<void> {
 		initialize_config(this.env);
 		validate_config();
 		initialize_providers();
 		register_tools(this.server);
 		setup_handlers(this.server);
-		this._initialized = true;
 		logger.info('OmnisearchMCP agent initialized', { op: 'agent_init' });
 	}
 }
@@ -180,7 +222,7 @@ export default {
 					request_id,
 					error: err instanceof Error ? err.message : String(err),
 				});
-				return Response.json({ error: 'Internal server error' }, { status: 500 });
+				return add_cors_headers(Response.json({ error: 'Internal server error' }, { status: 500 }));
 			}
 			const response = await handle_rest_search(request);
 			const duration = Date.now() - start_time;
@@ -201,7 +243,7 @@ export default {
 					request_id,
 					error: err instanceof Error ? err.message : String(err),
 				});
-				return Response.json({ error: 'Internal server error' }, { status: 500 });
+				return add_cors_headers(Response.json({ error: 'Internal server error' }, { status: 500 }));
 			}
 			const response = await handle_rest_fetch(request);
 			const duration = Date.now() - start_time;
@@ -238,7 +280,7 @@ export default {
 					request_id,
 					error: err instanceof Error ? err.message : String(err),
 				});
-				return Response.json({ error: 'MCP processing error' }, { status: 500 });
+				return add_cors_headers(Response.json({ error: 'MCP processing error' }, { status: 500 }));
 			}
 		}
 
