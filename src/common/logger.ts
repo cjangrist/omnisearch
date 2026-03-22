@@ -3,6 +3,14 @@
 
 type LogLevel = 'trace' | 'debug' | 'info' | 'warn' | 'error';
 
+// Module-level request context — set at the Worker entry point, read by all loggers.
+// Safe on CF Workers: each isolate processes one request at a time for REST,
+// and DO requests are serialized per-instance.
+let current_request_id: string | undefined;
+
+export const set_request_id = (id: string) => { current_request_id = id; };
+export const clear_request_id = () => { current_request_id = undefined; };
+
 interface LogContext {
 	component?: string;
 	op?: string;
@@ -70,7 +78,7 @@ class Logger {
 			component: this.component,
 			context: {
 				...context,
-				requestId: this.requestId,
+				requestId: current_request_id ?? this.requestId,
 			},
 		};
 		return JSON.stringify(entry);
