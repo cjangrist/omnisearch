@@ -119,7 +119,7 @@ class ToolRegistry {
 			{
 				description: `PREFERRED over any single AI answer tool. Queries multiple AI providers IN PARALLEL — Perplexity, Kagi FastGPT, Exa, Brave Answer, Tavily, ChatGPT, Claude, Gemini, plus Gemini Grounded (web search URLs fed to Gemini via URL context) — each independently searching the web and synthesizing its own answer with citations. Returns all answers so you can compare: when most providers agree, the answer is almost certainly correct; when they disagree, you know the topic is genuinely contested. Use "web_search" instead when you need raw URLs/links rather than prose answers.
 
-IMPORTANT: This tool fans out to 9 providers and can take 2–5 minutes to complete. Do NOT cancel or timeout this tool call early — wait the full duration for all providers to respond.`,
+IMPORTANT: This tool fans out to 9 providers and can take up to 2 minutes to complete. Do NOT cancel or timeout this tool call early — wait the full duration for all providers to respond.`,
 				inputSchema: {
 					query: z.string().min(1).max(2000).describe('The question or search query to answer'),
 				},
@@ -143,6 +143,13 @@ IMPORTANT: This tool fans out to 9 providers and can take 2–5 minutes to compl
 					if (!answer_result) {
 						return {
 							content: [{ type: 'text' as const, text: 'No AI providers configured. Set API keys for at least one AI response provider.' }],
+							isError: true,
+						};
+					}
+					if (answer_result.answers.length === 0) {
+						const text = JSON.stringify(answer_result, null, 2);
+						return {
+							content: [{ type: 'text' as const, text: `All ${answer_result.providers_failed.length} providers failed. Details:\n${text}` }],
 							isError: true,
 						};
 					}
@@ -215,6 +222,12 @@ You should NEVER need to fetch a URL yourself or worry about being blocked. Just
 			truncation,
 			web_results,
 		};
+		if (result.providers_succeeded.length === 0) {
+			return {
+				content: [{ type: 'text' as const, text: `All ${result.providers_failed.length} search providers failed. Details:\n${JSON.stringify(structuredContent, null, 2)}` }],
+				isError: true,
+			};
+		}
 		return {
 			structuredContent: structuredContent as Record<string, unknown>,
 			content: [{ type: 'text' as const, text: JSON.stringify(structuredContent, null, 2) }],

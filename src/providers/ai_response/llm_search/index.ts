@@ -104,7 +104,7 @@ export const GeminiProvider = () => create_llm_provider(
 );
 
 export const registration = [
-	{ name: 'chatgpt' as const, key: () => config.ai_response.chatgpt.base_url || undefined, factory: ChatGPTProvider },
-	{ name: 'claude' as const, key: () => config.ai_response.claude.base_url || undefined, factory: ClaudeProvider },
-	{ name: 'gemini' as const, key: () => config.ai_response.gemini.base_url || undefined, factory: GeminiProvider },
+	{ name: 'chatgpt' as const, key: () => (config.ai_response.chatgpt.base_url && config.ai_response.chatgpt.api_key) || undefined, factory: ChatGPTProvider },
+	{ name: 'claude' as const, key: () => (config.ai_response.claude.base_url && config.ai_response.claude.api_key) || undefined, factory: ClaudeProvider },
+	{ name: 'gemini' as const, key: () => (config.ai_response.gemini.base_url && config.ai_response.gemini.api_key) || undefined, factory: GeminiProvider },
 ];

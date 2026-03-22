@@ -52,22 +52,33 @@ const add_cors_headers = (response: Response): Response => {
 
 // ── SSE keepalive injection ──────────────────────────────────────────────────
 // The agents package's DO transport (WebSocket→SSE bridge) does NOT send keepalive
-// pings on POST SSE responses. We inject `event: ping` every 5s to prevent proxies
-// and MCP clients (Claude web, Claude Code) from killing the stream during long tool calls.
+// on POST SSE responses. We inject named SSE events every 5s to keep the connection
+// alive through Cloudflare's proxy. Using `event: ping` ensures MCP SDK clients
+// silently ignore it (they only process `event: message` or unnamed events).
 
 const SSE_KEEPALIVE_INTERVAL_MS = 5_000;
-const SSE_PING = new TextEncoder().encode('event: ping\ndata: \n\n');
+const SSE_PING = new TextEncoder().encode('event: ping\ndata: keepalive\n\n');
 
 const inject_sse_keepalive = (original: Response): Response => {
 	const { readable, writable } = new TransformStream();
 	const writer = writable.getWriter();
+	const reader = original.body!.getReader();
+	let closed = false;
+
+	const cleanup = () => {
+		if (closed) return;
+		closed = true;
+		clearInterval(keepalive);
+		reader.cancel().catch(() => {});
+		writer.close().catch(() => {});
+	};
 
 	const keepalive = setInterval(() => {
-		writer.write(SSE_PING).catch(() => clearInterval(keepalive));
+		if (closed) return;
+		writer.write(SSE_PING).catch(cleanup);
 	}, SSE_KEEPALIVE_INTERVAL_MS);
 
 	const pump = async () => {
-		const reader = original.body!.getReader();
 		try {
 			for (;;) {
 				const { value, done } = await reader.read();
@@ -75,14 +86,10 @@ const inject_sse_keepalive = (original: Response): Response => {
 				await writer.write(value);
 			}
 		} finally {
-			clearInterval(keepalive);
-			await writer.close().catch(() => {});
+			cleanup();
 		}
 	};
-	pump().catch(() => {
-		clearInterval(keepalive);
-		writer.close().catch(() => {});
-	});
+	pump().catch(cleanup);
 
 	return new Response(readable, {
 		status: original.status,
@@ -111,14 +118,16 @@ export class OmnisearchMCP extends McpAgent<Env> {
 		},
 	);
 
+	private _initialized = false;
+
 	async init(): Promise<void> {
-		// Runs once per DO activation (per session). All subsequent tool calls within
-		// the same session reuse the already-initialized providers and config.
+		if (this._initialized) return;
 		initialize_config(this.env);
 		validate_config();
 		initialize_providers();
 		register_tools(this.server);
 		setup_handlers(this.server);
+		this._initialized = true;
 		logger.info('OmnisearchMCP agent initialized', { op: 'agent_init' });
 	}
 }
@@ -128,7 +137,14 @@ export class OmnisearchMCP extends McpAgent<Env> {
 // We intercept /search, /fetch, /health before delegating to it.
 // mcp_handler is created at module load time (stores class ref + path only; no DOs spun up).
 
-const mcp_handler = OmnisearchMCP.serve('/mcp', { binding: 'OmnisearchMCP' });
+const mcp_handler = OmnisearchMCP.serve('/mcp', {
+	binding: 'OmnisearchMCP',
+	corsOptions: {
+		origin: '*',
+		headers: '*',
+		exposeHeaders: '*',
+	},
+});
 
 export default {
 	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -145,8 +161,8 @@ export default {
 			cf_ipcountry: request.headers.get('cf-ipcountry') ?? 'unknown',
 		});
 
-		// CORS preflight
-		if (request.method === 'OPTIONS') {
+		// CORS preflight — let /mcp use the agents package's wildcard CORS
+		if (request.method === 'OPTIONS' && url.pathname !== '/mcp') {
 			logger.debug('Handling CORS preflight', { op: 'cors', request_id });
 			return handle_cors_preflight();
 		}
@@ -205,18 +221,29 @@ export default {
 		}
 
 		// MCP: delegate to the McpAgent DO handler.
-		// The agents package's DO transport (WebSocket bridge) does NOT include keepalive
-		// pings on POST SSE streams — only the stateless WorkerTransport does. We wrap
-		// POST /mcp SSE responses with 5-second pings to prevent Claude web's 45s timeout
-		// from killing long-running tool calls (answer fanout takes 20–120s).
-		const response = await mcp_handler.fetch(request, env, ctx);
-		if (
-			request.method === 'POST'
-			&& response.body
-			&& response.headers.get('content-type')?.includes('text/event-stream')
-		) {
-			return inject_sse_keepalive(response);
+		if (url.pathname === '/mcp') {
+			try {
+				const response = await mcp_handler.fetch(request, env, ctx);
+				if (
+					request.method === 'POST'
+					&& response.body
+					&& response.headers.get('content-type')?.includes('text/event-stream')
+				) {
+					return inject_sse_keepalive(response);
+				}
+				return response;
+			} catch (err) {
+				logger.error('MCP handler error', {
+					op: 'mcp_handler',
+					request_id,
+					error: err instanceof Error ? err.message : String(err),
+				});
+				return Response.json({ error: 'MCP processing error' }, { status: 500 });
+			}
 		}
-		return response;
+
+		// 404
+		logger.warn('Route not found', { op: 'not_found', request_id, path: url.pathname });
+		return new Response('Not found', { status: 404 });
 	},
 } satisfies ExportedHandler<Env>;

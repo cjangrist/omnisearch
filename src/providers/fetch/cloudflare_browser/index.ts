@@ -56,5 +56,5 @@ export class CloudflareBrowserFetchProvider implements FetchProvider {
 }
 
 export const registration = {
-	key: () => config.fetch.cloudflare_browser.account_id && config.fetch.cloudflare_browser.api_key ? config.fetch.cloudflare_browser.account_id : undefined,
+	key: () => config.fetch.cloudflare_browser.account_id && config.fetch.cloudflare_browser.api_key && config.fetch.cloudflare_browser.email ? config.fetch.cloudflare_browser.account_id : undefined,
 };

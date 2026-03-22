@@ -247,12 +247,6 @@ export const config = {
 			timeout: 60000,
 		},
 	},
-	fetch_retry: {
-		max_retries: 2,
-		min_timeout_ms: 1000,
-		max_timeout_ms: 5000,
-		request_timeout_ms: 30000,
-	},
 };
 
 // Populate config from Workers env bindings (called per-request)
@@ -280,10 +274,14 @@ export const initialize_config = (env: Env) => {
 	config.ai_response.brave_answer.api_key = env.BRAVE_ANSWER_API_KEY;
 	config.ai_response.tavily_answer.api_key = env.TAVILY_API_KEY;
 	// LLM search providers (ChatGPT/Claude/Gemini via OpenAI-compatible endpoint)
-	if (env.LLM_SEARCH_BASE_URL) {
+	// Require BOTH base_url AND api_key — without a key, requests fail auth every time.
+	if (env.LLM_SEARCH_BASE_URL && env.LLM_SEARCH_API_KEY) {
 		config.ai_response.chatgpt.base_url = env.LLM_SEARCH_BASE_URL;
 		config.ai_response.claude.base_url = env.LLM_SEARCH_BASE_URL;
 		config.ai_response.gemini.base_url = env.LLM_SEARCH_BASE_URL;
+		config.ai_response.chatgpt.api_key = env.LLM_SEARCH_API_KEY;
+		config.ai_response.claude.api_key = env.LLM_SEARCH_API_KEY;
+		config.ai_response.gemini.api_key = env.LLM_SEARCH_API_KEY;
 	}
 	if (env.LLM_SEARCH_CHATGPT_MODEL) {
 		config.ai_response.chatgpt.model = env.LLM_SEARCH_CHATGPT_MODEL;
@@ -336,10 +334,6 @@ export const initialize_config = (env: Env) => {
 	config.fetch.supadata.api_key = env.SUPADATA_API_KEY;
 
 	// Fetch retry/timeout tuning
-	if (env.FETCH_MAX_RETRIES) config.fetch_retry.max_retries = parseInt(env.FETCH_MAX_RETRIES, 10);
-	if (env.FETCH_RETRY_MIN_TIMEOUT_MS) config.fetch_retry.min_timeout_ms = parseInt(env.FETCH_RETRY_MIN_TIMEOUT_MS, 10);
-	if (env.FETCH_RETRY_MAX_TIMEOUT_MS) config.fetch_retry.max_timeout_ms = parseInt(env.FETCH_RETRY_MAX_TIMEOUT_MS, 10);
-	if (env.FETCH_TIMEOUT_MS) config.fetch_retry.request_timeout_ms = parseInt(env.FETCH_TIMEOUT_MS, 10);
 
 	logger.debug('Configuration initialized successfully');
 };
