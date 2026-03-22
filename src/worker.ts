@@ -159,7 +159,10 @@ export class OmnisearchMCP extends McpAgent<Env> {
 
 	async init(): Promise<void> {
 		if (!this._init_promise) {
-			this._init_promise = this._do_init();
+			this._init_promise = this._do_init().catch((err) => {
+				this._init_promise = undefined; // allow retry on next request
+				throw err;
+			});
 		}
 		return this._init_promise;
 	}
