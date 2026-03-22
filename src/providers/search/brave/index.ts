@@ -6,6 +6,7 @@ import {
 } from '../../../common/types.js';
 import {
 	handle_provider_error,
+	make_signal,
 	validate_api_key,
 } from '../../../common/utils.js';
 import {
@@ -66,7 +67,7 @@ export class BraveSearchProvider implements SearchProvider {
 						Accept: 'application/json',
 						'X-Subscription-Token': api_key,
 					},
-					signal: AbortSignal.timeout(config.search.brave.timeout),
+					signal: make_signal(config.search.brave.timeout, params.signal),
 				},
 			);
 

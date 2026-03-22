@@ -6,6 +6,7 @@ import {
 } from '../../../common/types.js';
 import {
 	handle_provider_error,
+	make_signal,
 	validate_api_key,
 } from '../../../common/utils.js';
 import {
@@ -73,7 +74,7 @@ export class TavilySearchProvider implements SearchProvider {
 					'Content-Type': 'application/json',
 				},
 				body: JSON.stringify(request_body),
-			signal: AbortSignal.timeout(config.search.tavily.timeout),
+			signal: make_signal(config.search.tavily.timeout, params.signal),
 			});
 
 			return (data.results || []).map((result) => ({

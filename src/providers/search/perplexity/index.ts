@@ -6,6 +6,7 @@ import {
 } from '../../../common/types.js';
 import {
 	handle_provider_error,
+	make_signal,
 	validate_api_key,
 } from '../../../common/utils.js';
 import { config } from '../../../config/env.js';
@@ -67,8 +68,8 @@ export class PerplexitySearchProvider implements SearchProvider {
 							search_context_size: SEARCH_CONTEXT_SIZE,
 						},
 					}),
-					signal: AbortSignal.timeout(
-						config.search.perplexity.timeout,
+					signal: make_signal(
+						config.search.perplexity.timeout, params.signal,
 					),
 				},
 			);

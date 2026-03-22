@@ -6,6 +6,7 @@ import {
 } from '../../../common/types.js';
 import {
 	handle_provider_error,
+	make_signal,
 	validate_api_key,
 } from '../../../common/utils.js';
 import { config } from '../../../config/env.js';
@@ -64,7 +65,7 @@ export class YouSearchProvider implements SearchProvider {
 						'X-API-Key': api_key,
 						Accept: 'application/json',
 					},
-					signal: AbortSignal.timeout(config.search.you.timeout),
+					signal: make_signal(config.search.you.timeout, params.signal),
 				},
 			);
 
