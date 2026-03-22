@@ -68,9 +68,15 @@ const inject_sse_keepalive = (original: Response): Response => {
 	let closed = false;
 
 	// Buffer as a list of chunks — avoids O(n^2) Uint8Array concatenation on every read.
-	// We only need to scan the tail for \n\n boundaries.
 	let chunks: Uint8Array[] = [];
 	let total_len = 0;
+
+	// Write lock — serializes pump writes and interval pings to prevent concurrent writer access.
+	let write_lock = Promise.resolve();
+	const safe_write = (chunk: Uint8Array): Promise<void> => {
+		write_lock = write_lock.then(() => writer.write(chunk)).catch(cleanup);
+		return write_lock;
+	};
 
 	const cleanup = () => {
 		if (closed) return;
@@ -106,7 +112,7 @@ const inject_sse_keepalive = (original: Response): Response => {
 		let offset = 0;
 		while ((boundary = find_event_boundary(buf.subarray(offset))) !== -1) {
 			const abs = offset + boundary;
-			await writer.write(buf.subarray(offset, abs));
+			await safe_write(buf.subarray(offset, abs));
 			offset = abs;
 		}
 		if (offset > 0) {
@@ -120,7 +126,7 @@ const inject_sse_keepalive = (original: Response): Response => {
 	const keepalive = setInterval(() => {
 		if (closed) return;
 		if (total_len === 0) {
-			writer.write(SSE_PING).catch(cleanup);
+			safe_write(SSE_PING);
 		}
 	}, SSE_KEEPALIVE_INTERVAL_MS);
 
@@ -130,7 +136,7 @@ const inject_sse_keepalive = (original: Response): Response => {
 				const { value, done } = await reader.read();
 				if (done) {
 					if (total_len > 0) {
-						await writer.write(flatten());
+						await safe_write(flatten());
 						chunks = [];
 						total_len = 0;
 					}
