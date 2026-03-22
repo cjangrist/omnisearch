@@ -81,7 +81,9 @@ export class UnifiedFetchProvider implements FetchProvider {
 	private providers: Map<string, FetchProvider>;
 
 	constructor() {
-		this.providers = new Map(PROVIDERS.map((p) => [p.name, p.factory()]));
+		this.providers = new Map(
+			PROVIDERS.filter((p) => p.key()?.trim()).map((p) => [p.name, p.factory()]),
+		);
 	}
 
 	async fetch_url(url: string, provider?: FetchProviderName): Promise<FetchResult> {

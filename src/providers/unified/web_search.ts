@@ -52,7 +52,9 @@ export class UnifiedWebSearchProvider implements SearchProvider {
 	private providers: Map<string, SearchProvider>;
 
 	constructor() {
-		this.providers = new Map(PROVIDERS.map((p) => [p.name, p.factory()]));
+		this.providers = new Map(
+			PROVIDERS.filter((p) => p.key()?.trim()).map((p) => [p.name, p.factory()]),
+		);
 	}
 
 	async search(params: UnifiedWebSearchParams): Promise<SearchResult[]> {
