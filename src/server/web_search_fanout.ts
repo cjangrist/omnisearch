@@ -6,42 +6,40 @@ import { loggers } from '../common/logger.js';
 import { rank_and_merge, truncate_web_results, type RankedWebResult } from '../common/rrf_ranking.js';
 import { retry_with_backoff } from '../common/utils.js';
 import { get_active_search_providers, type WebSearchProvider } from '../providers/unified/web_search.js';
+import { kv_cache } from '../config/env.js';
 
 const logger = loggers.search();
 
 const DEFAULT_TOP_N = 15;
-
-// Short-lived cache to deduplicate identical queries across tool calls
-// (e.g., web_search followed by answer with the same query, or gemini-grounded
-// inside the answer fanout). TTL is short to avoid stale results.
-const CACHE_TTL_MS = 30_000;
-const CACHE_MAX_SIZE = 50;
-const fanout_cache = new Map<string, { result: FanoutResult; expires: number }>();
+const KV_SEARCH_TTL_SECONDS = 86_400; // 24 hours
+const KV_SEARCH_PREFIX = 'search:';
 
 // Cache key includes options that affect results — prevents partial/filtered results
 // from poisoning later calls that expect full results.
-const make_cache_key = (query: string, options?: { skip_quality_filter?: boolean; timeout_ms?: number }): string =>
-	options?.skip_quality_filter || options?.timeout_ms
+const make_cache_key = (query: string, options?: { skip_quality_filter?: boolean; timeout_ms?: number }): string => {
+	const base = options?.skip_quality_filter || options?.timeout_ms
 		? `${query}\0sqf=${options.skip_quality_filter ?? false}\0t=${options.timeout_ms ?? 0}`
 		: query;
-
-const get_cached = (key: string): FanoutResult | undefined => {
-	const entry = fanout_cache.get(key);
-	if (!entry) return undefined;
-	if (Date.now() > entry.expires) {
-		fanout_cache.delete(key);
-		return undefined;
-	}
-	return entry.result;
+	return KV_SEARCH_PREFIX + base;
 };
 
-const set_cached = (key: string, result: FanoutResult) => {
-	// LRU eviction: Map preserves insertion order, so first key is oldest
-	if (fanout_cache.size >= CACHE_MAX_SIZE) {
-		const oldest_key = fanout_cache.keys().next().value;
-		if (oldest_key !== undefined) fanout_cache.delete(oldest_key);
+const get_cached = async (key: string): Promise<FanoutResult | undefined> => {
+	if (!kv_cache) return undefined;
+	try {
+		const cached = await kv_cache.get(key, 'json');
+		return cached as FanoutResult | undefined;
+	} catch {
+		return undefined;
 	}
-	fanout_cache.set(key, { result, expires: Date.now() + CACHE_TTL_MS });
+};
+
+const set_cached = async (key: string, result: FanoutResult): Promise<void> => {
+	if (!kv_cache) return;
+	try {
+		await kv_cache.put(key, JSON.stringify(result), { expirationTtl: KV_SEARCH_TTL_SECONDS });
+	} catch (err) {
+		logger.warn('KV cache write failed', { op: 'kv_write_error', error: err instanceof Error ? err.message : String(err) });
+	}
 };
 
 export interface FanoutResult {
@@ -162,7 +160,7 @@ export const run_web_search_fanout = async (
 ): Promise<FanoutResult> => {
 	// Return cached result if available (deduplicates gemini-grounded web search inside answer fanout)
 	const cache_key = make_cache_key(query, options);
-	const cached = get_cached(cache_key);
+	const cached = await get_cached(cache_key);
 	if (cached) {
 		logger.debug('Returning cached fanout result', { op: 'fanout_cache_hit', query: query.slice(0, 100) });
 		return cached;
@@ -220,6 +218,7 @@ export const run_web_search_fanout = async (
 		web_results,
 	};
 
+	// Fire-and-forget KV cache write — don't block the response
 	set_cached(cache_key, result);
 	return result;
 };

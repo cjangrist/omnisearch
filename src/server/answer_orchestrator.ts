@@ -3,7 +3,7 @@
 
 import type { SearchResult } from '../common/types.js';
 import { loggers } from '../common/logger.js';
-import { config } from '../config/env.js';
+import { config, kv_cache } from '../config/env.js';
 import { get_active_ai_providers, type AISearchProvider, type UnifiedAISearchProvider } from '../providers/unified/ai_search.js';
 import type { UnifiedWebSearchProvider } from '../providers/unified/web_search.js';
 import { gemini_grounded_search } from '../providers/ai_response/gemini_grounded/index.js';
@@ -13,6 +13,8 @@ const logger = loggers.aiResponse();
 
 const GLOBAL_TIMEOUT_MS = 120_000; // 2 min hard deadline for the entire fanout
 const PROGRESS_INTERVAL_MS = 5_000;
+const KV_ANSWER_TTL_SECONDS = 86_400; // 24 hours
+const KV_ANSWER_PREFIX = 'answer:';
 
 interface ProviderTask {
 	name: string;
@@ -226,6 +228,17 @@ export const run_answer_fanout = async (
 	web_search_ref: UnifiedWebSearchProvider | undefined,
 	query: string,
 ): Promise<AnswerResult | null> => {
+	// Check KV cache first
+	if (kv_cache) {
+		try {
+			const cached = await kv_cache.get(KV_ANSWER_PREFIX + query, 'json') as AnswerResult | null;
+			if (cached) {
+				logger.debug('Returning cached answer result', { op: 'answer_cache_hit', query: query.slice(0, 100) });
+				return cached;
+			}
+		} catch { /* cache miss or read error — proceed normally */ }
+	}
+
 	const abort_controller = new AbortController();
 	const tasks = build_tasks(ai_search_ref, web_search_ref, query, abort_controller.signal);
 	if (tasks.length === 0) {
@@ -262,6 +275,12 @@ export const run_answer_fanout = async (
 		providers_succeeded: result.providers_succeeded.length,
 		providers_failed: result.providers_failed.length,
 	});
+
+	// Cache successful results (fire-and-forget) — only cache if at least one provider succeeded
+	if (kv_cache && result.answers.length > 0) {
+		kv_cache.put(KV_ANSWER_PREFIX + query, JSON.stringify(result), { expirationTtl: KV_ANSWER_TTL_SECONDS })
+			.catch((err) => logger.warn('KV answer cache write failed', { op: 'kv_write_error', error: err instanceof Error ? err.message : String(err) }));
+	}
 
 	return result;
 };

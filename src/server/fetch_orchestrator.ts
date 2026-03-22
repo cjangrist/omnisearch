@@ -15,8 +15,27 @@ import {
 	type UnifiedFetchProvider,
 	get_active_fetch_providers,
 } from '../providers/unified/fetch.js';
+import { kv_cache } from '../config/env.js';
 
 const logger = loggers.fetch();
+
+const KV_FETCH_TTL_SECONDS = 86_400; // 24 hours
+const KV_FETCH_PREFIX = 'fetch:';
+
+const get_fetch_cached = async (url: string): Promise<FetchRaceResult | undefined> => {
+	if (!kv_cache) return undefined;
+	try {
+		return await kv_cache.get(KV_FETCH_PREFIX + url, 'json') as FetchRaceResult | undefined;
+	} catch {
+		return undefined;
+	}
+};
+
+const set_fetch_cached = (url: string, result: FetchRaceResult): void => {
+	if (!kv_cache) return;
+	kv_cache.put(KV_FETCH_PREFIX + url, JSON.stringify(result), { expirationTtl: KV_FETCH_TTL_SECONDS })
+		.catch((err) => logger.warn('KV fetch cache write failed', { op: 'kv_write_error', error: err instanceof Error ? err.message : String(err) }));
+};
 
 // ── Config (runtime mirror of config.yaml) ───────────────────────
 
@@ -257,6 +276,15 @@ export const run_fetch_race = async (
 	const attempted: string[] = [];
 	const failed: Array<{ provider: string; error: string; duration_ms: number }> = [];
 
+	// Check KV cache first (skip for explicit provider mode — user wants a specific provider)
+	if (!options?.provider) {
+		const cached = await get_fetch_cached(url);
+		if (cached) {
+			logger.debug('Returning cached fetch result', { op: 'fetch_cache_hit', url: url.slice(0, 200), provider: cached.provider_used });
+			return cached;
+		}
+	}
+
 	// Explicit provider mode (no waterfall) — still validate against challenge/empty detection
 	if (options?.provider) {
 		const provider = options.provider;
@@ -280,6 +308,13 @@ export const run_fetch_race = async (
 	// Auto waterfall mode
 	logger.info('Waterfall start', { op: 'waterfall_start', url: url.slice(0, 200) });
 
+	// Helper: build result and cache it for future requests
+	const build_and_cache = (provider: string, result: FetchResult): FetchRaceResult => {
+		const race_result = build_result(start_time, provider, result, attempted, failed);
+		set_fetch_cached(url, race_result); // fire-and-forget
+		return race_result;
+	};
+
 	const active = new Set(get_active_fetch_providers().map((p) => p.name));
 	const ctx: StepContext = { unified: fetch_provider, url, active, attempted, failed };
 
@@ -294,7 +329,7 @@ export const run_fetch_race = async (
 			});
 			const breaker_result = await run_solo(ctx, breaker_config.provider);
 			if (breaker_result) {
-				return build_result(start_time, breaker_config.provider, breaker_result, attempted, failed);
+				return build_and_cache(breaker_config.provider, breaker_result);
 			}
 			logger.warn('Breaker failed, continuing', { op: 'breaker_fallthrough', breaker: breaker_name });
 		}
@@ -310,7 +345,7 @@ export const run_fetch_race = async (
 				steps_tried: attempted.length,
 				total_ms: Date.now() - start_time,
 			});
-			return build_result(start_time, step_result.provider, step_result.result, attempted, failed);
+			return build_and_cache(step_result.provider, step_result.result);
 		}
 	}
 

@@ -10,6 +10,9 @@ const logger = loggers.config();
 export let OPENWEBUI_API_KEY: string | undefined;
 export let OMNISEARCH_API_KEY: string | undefined;
 
+// KV namespace for caching (set during initialize_config)
+export let kv_cache: KVNamespace | undefined;
+
 // Provider configuration — single source of truth for API keys and endpoints.
 // To add a provider: add one entry here, one env var in types/env.ts,
 // one line in initialize_config(), and one line in the unified dispatcher.
@@ -255,6 +258,7 @@ export const initialize_config = (env: Env) => {
 
 	OPENWEBUI_API_KEY = env.OPENWEBUI_API_KEY;
 	OMNISEARCH_API_KEY = env.OMNISEARCH_API_KEY;
+	kv_cache = env.CACHE;
 
 	// Search providers
 	config.search.tavily.api_key = env.TAVILY_API_KEY;
