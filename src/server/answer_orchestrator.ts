@@ -61,7 +61,7 @@ const build_answer_entry = (
 			.map((c) => ({
 				title: c.title,
 				url: c.url,
-				...(c.snippet && c.snippet !== 'Source citation' && !c.snippet.startsWith('Research source:')
+				...(c.snippet && c.snippet !== 'Source citation' && !c.snippet.startsWith('Source: http') && !c.snippet.startsWith('Research source:')
 					? { snippet: c.snippet }
 					: {}),
 			})),

@@ -113,9 +113,9 @@ export async function gemini_grounded_search(
 				metadata: { model, urls_provided: filtered_sources.length, urls_fetched: fetched_urls.length },
 			},
 			...fetched_urls.map((u) => ({
-				title: new URL(u).hostname,
+				title: new URL(u).hostname.replace(/^www\./, ''),
 				url: u,
-				snippet: 'Source citation',
+				snippet: `Source: ${u}`,
 				score: 0,
 				source_provider: PROVIDER_NAME,
 			})),
