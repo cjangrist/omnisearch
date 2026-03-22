@@ -182,6 +182,23 @@ export class OmnisearchMCP extends McpAgent<Env> {
 // We intercept /search, /fetch, /health before delegating to it.
 // mcp_handler is created at module load time (stores class ref + path only; no DOs spun up).
 
+// REST path initialization — env bindings are immutable within an isolate's lifetime,
+// so we only need to initialize once. Uses the same rejected-promise-retry pattern as the DO.
+let _rest_init: Promise<void> | undefined;
+const ensure_rest_initialized = (env: Env): Promise<void> => {
+	if (!_rest_init) {
+		_rest_init = (async () => {
+			initialize_config(env);
+			validate_config();
+			initialize_providers();
+		})().catch((err) => {
+			_rest_init = undefined;
+			throw err;
+		});
+	}
+	return _rest_init;
+};
+
 const mcp_handler = OmnisearchMCP.serve('/mcp', {
 	binding: 'OmnisearchMCP',
 	corsOptions: {
@@ -216,13 +233,10 @@ export default {
 		if (request.method === 'POST' && url.pathname === '/search') {
 			logger.info('Handling REST search request', { op: 'rest_search', request_id });
 			try {
-				initialize_config(env);
-				validate_config();
-				initialize_providers();
+				await ensure_rest_initialized(env);
 			} catch (err) {
 				logger.error('Provider initialization failed', {
-					op: 'provider_init',
-					request_id,
+					op: 'provider_init', request_id,
 					error: err instanceof Error ? err.message : String(err),
 				});
 				return add_cors_headers(Response.json({ error: 'Internal server error' }, { status: 500 }));
@@ -237,13 +251,10 @@ export default {
 		if (request.method === 'POST' && url.pathname === '/fetch') {
 			logger.info('Handling REST fetch request', { op: 'rest_fetch', request_id });
 			try {
-				initialize_config(env);
-				validate_config();
-				initialize_providers();
+				await ensure_rest_initialized(env);
 			} catch (err) {
 				logger.error('Provider initialization failed', {
-					op: 'provider_init',
-					request_id,
+					op: 'provider_init', request_id,
 					error: err instanceof Error ? err.message : String(err),
 				});
 				return add_cors_headers(Response.json({ error: 'Internal server error' }, { status: 500 }));
