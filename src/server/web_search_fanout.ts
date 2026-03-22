@@ -14,12 +14,10 @@ const DEFAULT_TOP_N = 15;
 const KV_SEARCH_TTL_SECONDS = 86_400; // 24 hours
 const KV_SEARCH_PREFIX = 'search:';
 
-// Cache key includes options that affect results — prevents partial/filtered results
-// from poisoning later calls that expect full results.
-const make_cache_key = (query: string, options?: { skip_quality_filter?: boolean; timeout_ms?: number }): string => {
-	const base = options?.skip_quality_filter || options?.timeout_ms
-		? `${query}\0sqf=${options.skip_quality_filter ?? false}\0t=${options.timeout_ms ?? 0}`
-		: query;
+// Cache key includes options that affect result quality (not latency).
+// timeout_ms is excluded — it affects speed, not what results are returned.
+const make_cache_key = (query: string, options?: { skip_quality_filter?: boolean }): string => {
+	const base = options?.skip_quality_filter ? `${query}\0sqf=true` : query;
 	return KV_SEARCH_PREFIX + base;
 };
 
@@ -80,9 +78,17 @@ const dispatch_to_providers = async (
 	// Create a deadline controller that we abort when timeout_ms fires,
 	// so in-flight provider HTTP requests are cancelled instead of running to completion.
 	const deadline_controller = timeout_ms ? new AbortController() : undefined;
-	const combined_signal = deadline_controller
-		? (signal ? AbortSignal.any([signal, deadline_controller.signal]) : deadline_controller.signal)
-		: signal;
+	// Combine external signal with deadline signal, using polyfill-safe path
+	let combined_signal = signal;
+	if (deadline_controller) {
+		if (signal) {
+			combined_signal = typeof AbortSignal.any === 'function'
+				? AbortSignal.any([signal, deadline_controller.signal])
+				: deadline_controller.signal; // fallback: deadline only (external signal still respected by providers via make_signal)
+		} else {
+			combined_signal = deadline_controller.signal;
+		}
+	}
 
 	const provider_promises = active.map(async (p) => {
 		const t0 = Date.now();

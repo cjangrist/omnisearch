@@ -56,7 +56,7 @@ export async function handle_rest_search(
 	try {
 		const body = await request.json() as { query?: string; count?: number; raw?: boolean };
 		query = body.query as string;
-		count = Math.max(0, body.count ?? 0);
+		count = Math.min(100, Math.max(0, body.count ?? 0));
 		raw = body.raw === true;
 	} catch (err) {
 		logger.warn('Invalid JSON body', {
