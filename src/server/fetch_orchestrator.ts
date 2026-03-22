@@ -181,7 +181,12 @@ const run_parallel = async (
 	try {
 		return await Promise.any(promises);
 	} catch {
-		// AggregateError — all providers failed (already recorded in ctx.failed above)
+		// AggregateError — all providers failed (individual errors already in ctx.failed)
+		logger.debug('All parallel providers failed', {
+			op: 'parallel_all_failed',
+			providers: available,
+			url: ctx.url.slice(0, 200),
+		});
 		return undefined;
 	}
 };
