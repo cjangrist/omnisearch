@@ -53,28 +53,34 @@ const http_core = async (
 	const res = await fetch(url, options);
 	const content_length = parseInt(res.headers.get('content-length') ?? '0', 10) || 0;
 
+	// Fast path: reject if content-length header exceeds limit
 	if (content_length > MAX_RESPONSE_BYTES) {
-		logger.error('Response too large', {
-			op: 'http_response',
-			provider,
-			content_length,
-			max_size: MAX_RESPONSE_BYTES,
-			status: res.status,
-		});
+		res.body?.cancel();
 		throw new ProviderError(ErrorType.API_ERROR, `Response too large (${content_length} bytes)`, provider);
 	}
 
-	const raw = await res.text();
-
-	if (raw.length > MAX_RESPONSE_BYTES) {
-		logger.error('Response too large', {
-			op: 'http_response',
-			provider,
-			response_length: raw.length,
-			max_size: MAX_RESPONSE_BYTES,
-			status: res.status,
-		});
-		throw new ProviderError(ErrorType.API_ERROR, `Response too large (${raw.length} chars)`, provider);
+	// Stream-read with byte counter to catch chunked-encoding responses that lie about
+	// or omit content-length. Prevents OOM from unbounded res.text() on malicious payloads.
+	let raw: string;
+	if (res.body) {
+		const reader = res.body.getReader();
+		const decoder = new TextDecoder();
+		const chunks: string[] = [];
+		let total_bytes = 0;
+		for (;;) {
+			const { value, done } = await reader.read();
+			if (done) break;
+			total_bytes += value.byteLength;
+			if (total_bytes > MAX_RESPONSE_BYTES) {
+				reader.cancel();
+				throw new ProviderError(ErrorType.API_ERROR, `Response too large (>${MAX_RESPONSE_BYTES} bytes, chunked)`, provider);
+			}
+			chunks.push(decoder.decode(value, { stream: true }));
+		}
+		chunks.push(decoder.decode()); // flush remaining
+		raw = chunks.join('');
+	} else {
+		raw = '';
 	}
 
 	const okOrExpected =
