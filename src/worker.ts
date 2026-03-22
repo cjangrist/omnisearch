@@ -66,7 +66,11 @@ const inject_sse_keepalive = (original: Response): Response => {
 	const writer = writable.getWriter();
 	const reader = original.body.getReader();
 	let closed = false;
-	let buffer = new Uint8Array(0);
+
+	// Buffer as a list of chunks — avoids O(n^2) Uint8Array concatenation on every read.
+	// We only need to scan the tail for \n\n boundaries.
+	let chunks: Uint8Array[] = [];
+	let total_len = 0;
 
 	const cleanup = () => {
 		if (closed) return;
@@ -74,6 +78,17 @@ const inject_sse_keepalive = (original: Response): Response => {
 		clearInterval(keepalive);
 		reader.cancel().catch(() => {});
 		writer.close().catch(() => {});
+	};
+
+	// Flatten chunks into a single Uint8Array (only when needed for boundary scanning)
+	const flatten = (): Uint8Array => {
+		if (chunks.length === 0) return new Uint8Array(0);
+		if (chunks.length === 1) return chunks[0];
+		const flat = new Uint8Array(total_len);
+		let offset = 0;
+		for (const c of chunks) { flat.set(c, offset); offset += c.length; }
+		chunks = [flat];
+		return flat;
 	};
 
 	// Find the first \n\n boundary in buf (end of a complete SSE event)
@@ -86,18 +101,25 @@ const inject_sse_keepalive = (original: Response): Response => {
 
 	// Flush all complete SSE events from the buffer to the writer
 	const flush_complete_events = async () => {
+		const buf = flatten();
 		let boundary: number;
-		while ((boundary = find_event_boundary(buffer)) !== -1) {
-			const event_bytes = buffer.slice(0, boundary);
-			buffer = buffer.slice(boundary);
-			await writer.write(event_bytes);
+		let offset = 0;
+		while ((boundary = find_event_boundary(buf.subarray(offset))) !== -1) {
+			const abs = offset + boundary;
+			await writer.write(buf.subarray(offset, abs));
+			offset = abs;
+		}
+		if (offset > 0) {
+			const remainder = buf.subarray(offset);
+			chunks = remainder.length > 0 ? [remainder] : [];
+			total_len = remainder.length;
 		}
 	};
 
 	// Only inject keepalive between complete events (buffer empty = no partial event in flight)
 	const keepalive = setInterval(() => {
 		if (closed) return;
-		if (buffer.length === 0) {
+		if (total_len === 0) {
 			writer.write(SSE_PING).catch(cleanup);
 		}
 	}, SSE_KEEPALIVE_INTERVAL_MS);
@@ -107,19 +129,15 @@ const inject_sse_keepalive = (original: Response): Response => {
 			for (;;) {
 				const { value, done } = await reader.read();
 				if (done) {
-					// Flush any remaining partial data (shouldn't happen with well-formed SSE)
-					if (buffer.length > 0) {
-						await writer.write(buffer);
-						buffer = new Uint8Array(0);
+					if (total_len > 0) {
+						await writer.write(flatten());
+						chunks = [];
+						total_len = 0;
 					}
 					break;
 				}
-				// Append chunk to buffer
-				const merged = new Uint8Array(buffer.length + value.length);
-				merged.set(buffer);
-				merged.set(value, buffer.length);
-				buffer = merged;
-				// Write out all complete events
+				chunks.push(value);
+				total_len += value.length;
 				await flush_complete_events();
 			}
 		} finally {
