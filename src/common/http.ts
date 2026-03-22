@@ -62,11 +62,11 @@ const http_core = async (
 	// Stream-read with byte counter to catch chunked-encoding responses that lie about
 	// or omit content-length. Prevents OOM from unbounded res.text() on malicious payloads.
 	let raw: string;
+	let total_bytes = 0;
 	if (res.body) {
 		const reader = res.body.getReader();
 		const decoder = new TextDecoder();
 		const chunks: string[] = [];
-		let total_bytes = 0;
 		for (;;) {
 			const { value, done } = await reader.read();
 			if (done) break;
@@ -125,7 +125,7 @@ const http_core = async (
 		provider,
 		status: res.status,
 		duration_ms,
-		content_length: raw.length,
+		content_length_bytes: total_bytes,
 	});
 
 	return { raw, status: res.status };
