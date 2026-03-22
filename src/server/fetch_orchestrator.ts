@@ -181,26 +181,33 @@ const run_parallel = async (
 
 	ctx.attempted.push(...available);
 
-	// Race providers — return the first success instead of waiting for all.
-	// Each provider promise individually tracks its own failure for logging.
+	// Race providers — return the first success, cancel losers.
+	// resolved flag prevents loser .catch() from mutating ctx.failed after winner returns.
+	let resolved = false;
+
 	const promises = available.map((p) => {
 		const t0 = Date.now();
 		return try_provider(ctx.unified, ctx.url, p)
 			.then((r) => ({ provider: p, result: r }))
 			.catch((error) => {
-				ctx.failed.push({
-					provider: p,
-					error: error instanceof Error ? error.message : String(error),
-					duration_ms: Date.now() - t0,
-				});
+				if (!resolved) {
+					ctx.failed.push({
+						provider: p,
+						error: error instanceof Error ? error.message : String(error),
+						duration_ms: Date.now() - t0,
+					});
+				}
 				throw error; // re-throw so Promise.any skips it
 			});
 	});
 
 	try {
-		return await Promise.any(promises);
+		const winner = await Promise.any(promises);
+		resolved = true;
+		return winner;
 	} catch {
 		// AggregateError — all providers failed (individual errors already in ctx.failed)
+		resolved = true;
 		logger.debug('All parallel providers failed', {
 			op: 'parallel_all_failed',
 			providers: available,
