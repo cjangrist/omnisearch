@@ -5,7 +5,7 @@
 //   2. Walk waterfall steps top-to-bottom (tavily first, then firecrawl, etc.)
 //   3. Return first good result; throw if all providers exhausted
 //
-// Config: config.yaml (source of truth) — keep the const below in sync.
+// Config: waterfall order, breakers, and failure heuristics are defined below.
 
 import type { FetchResult } from '../common/types.js';
 import { ErrorType, ProviderError } from '../common/types.js';

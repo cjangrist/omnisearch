@@ -20,7 +20,7 @@ export const setup_handlers = (server: McpServer) => {
 						mimeType: 'application/json',
 						text: JSON.stringify(
 							{
-								status: 'operational',
+								status: (active_providers.search.size + active_providers.ai_response.size + active_providers.fetch.size) > 0 ? 'operational' : 'unavailable',
 								providers: {
 									search: Array.from(active_providers.search),
 									ai_response: Array.from(
@@ -50,9 +50,9 @@ export const setup_handlers = (server: McpServer) => {
 	// Provider Info Resource Template
 	server.resource(
 		'provider-info',
-		new ResourceTemplate('omnisearch://search/{provider}/info', { list: undefined }),
+		new ResourceTemplate('omnisearch://providers/{provider}/info', { list: undefined }),
 		{
-			description: 'Information about a specific search provider',
+			description: 'Information about a specific provider (search, AI, or fetch)',
 			mimeType: 'application/json',
 		},
 		async (uri, { provider }) => {

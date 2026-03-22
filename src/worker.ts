@@ -7,7 +7,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { McpAgent } from 'agents/mcp';
 import { initialize_config, validate_config } from './config/env.js';
 import { initialize_providers } from './providers/index.js';
-import { register_tools } from './server/tools.js';
+import { register_tools, active_providers } from './server/tools.js';
 import { setup_handlers } from './server/handlers.js';
 import { handle_rest_search } from './server/rest_search.js';
 import { handle_rest_fetch } from './server/rest_fetch.js';
@@ -150,7 +150,10 @@ const inject_sse_keepalive = (original: Response): Response => {
 				}
 				chunks.push(value);
 				total_len += value.length;
-				await flush_complete_events();
+				// Only scan for event boundaries when the chunk contains a line break
+				if (value.indexOf(0x0a) !== -1 || value.indexOf(0x0d) !== -1) {
+					await flush_complete_events();
+				}
 			}
 		} finally {
 			cleanup();
@@ -283,8 +286,6 @@ async function handle_request(request: Request, env: Env, ctx: ExecutionContext,
 				logger.error('REST search handler error', { op: 'rest_search', request_id, error: err instanceof Error ? err.message : String(err) });
 				return add_cors_headers(Response.json({ error: 'Internal server error' }, { status: 500 }));
 			}
-			const duration = Date.now() - start_time;
-			logger.response(request.method, url.pathname, response.status, duration, { request_id });
 			return add_cors_headers(response);
 		}
 
@@ -307,8 +308,6 @@ async function handle_request(request: Request, env: Env, ctx: ExecutionContext,
 				logger.error('REST fetch handler error', { op: 'rest_fetch', request_id, error: err instanceof Error ? err.message : String(err) });
 				return add_cors_headers(Response.json({ error: 'Internal server error' }, { status: 500 }));
 			}
-			const duration = Date.now() - start_time;
-			logger.response(request.method, url.pathname, fetch_response.status, duration, { request_id });
 			return add_cors_headers(fetch_response);
 		}
 
@@ -317,8 +316,16 @@ async function handle_request(request: Request, env: Env, ctx: ExecutionContext,
 			logger.debug('Health check request', { op: 'health_check', request_id });
 			const duration = Date.now() - start_time;
 			logger.response(request.method, url.pathname, 200, duration, { request_id });
+			// Try to init so we can report provider availability
+			try { await ensure_rest_initialized(env); } catch { /* best effort */ }
+			const total = active_providers.search.size + active_providers.ai_response.size + active_providers.fetch.size;
 			return add_cors_headers(new Response(
-				JSON.stringify({ status: 'ok', name: SERVER_NAME, version: SERVER_VERSION }),
+				JSON.stringify({
+					status: total > 0 ? 'ok' : 'degraded',
+					name: SERVER_NAME,
+					version: SERVER_VERSION,
+					providers: total,
+				}),
 				{ status: 200, headers: { 'Content-Type': 'application/json' } },
 			));
 		}

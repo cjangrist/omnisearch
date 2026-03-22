@@ -109,8 +109,7 @@ const http_core = async (
 			case 403:
 				throw new ProviderError(ErrorType.API_ERROR, 'API key does not have access to this endpoint', provider);
 			case 429:
-				handle_rate_limit(provider);
-				break;
+				handle_rate_limit(provider); // always throws (never)
 			default:
 				if (res.status >= 500) {
 					throw new ProviderError(ErrorType.PROVIDER_ERROR, `${provider} API internal error (${res.status}): ${safe_message}`, provider);
