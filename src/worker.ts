@@ -11,7 +11,7 @@ import { register_tools } from './server/tools.js';
 import { setup_handlers } from './server/handlers.js';
 import { handle_rest_search } from './server/rest_search.js';
 import { handle_rest_fetch } from './server/rest_fetch.js';
-import { loggers, set_request_id } from './common/logger.js';
+import { loggers, run_with_request_id } from './common/logger.js';
 import type { Env } from './types/env.js';
 
 const logger = loggers.worker();
@@ -243,8 +243,12 @@ export default {
 		const url = new URL(request.url);
 		const start_time = Date.now();
 		const request_id = crypto.randomUUID();
-		set_request_id(request_id);
 
+		return run_with_request_id(request_id, () => handle_request(request, env, ctx, url, start_time, request_id));
+	},
+} satisfies ExportedHandler<Env>;
+
+async function handle_request(request: Request, env: Env, ctx: ExecutionContext, url: URL, start_time: number, request_id: string): Promise<Response> {
 		logger.info('Incoming request', {
 			op: 'request_start',
 			request_id,
@@ -344,5 +348,4 @@ export default {
 		// 404
 		logger.warn('Route not found', { op: 'not_found', request_id, path: url.pathname });
 		return add_cors_headers(Response.json({ error: 'Not found' }, { status: 404 }));
-	},
-} satisfies ExportedHandler<Env>;
+}

@@ -1,15 +1,34 @@
 // Structured logging utility for Cloudflare Workers
 // Provides consistent log formatting with tags, levels, and context
 
+// AsyncLocalStorage for request-scoped context — prevents request ID cross-contamination
+// when CF Workers process concurrent requests in the same isolate.
+// Available via nodejs_compat flag in wrangler.toml.
+
 type LogLevel = 'trace' | 'debug' | 'info' | 'warn' | 'error';
 
-// Module-level request context — set at the Worker entry point, read by all loggers.
-// Safe on CF Workers: each isolate processes one request at a time for REST,
-// and DO requests are serialized per-instance.
-let current_request_id: string | undefined;
+// Lazy-init to avoid top-level import issues with CF Workers bundler
+let _als: { getStore(): string | undefined; run<R>(store: string, callback: () => R): R } | undefined;
 
-export const set_request_id = (id: string) => { current_request_id = id; };
-export const clear_request_id = () => { current_request_id = undefined; };
+const get_als = () => {
+	if (!_als) {
+		try {
+			// Dynamic import at runtime — nodejs_compat makes this available
+			const mod = (globalThis as unknown as { process?: unknown }).process
+				? (eval('require')('node:async_hooks') as { AsyncLocalStorage: new () => typeof _als })
+				: undefined;
+			if (mod) _als = new mod.AsyncLocalStorage();
+		} catch { /* fallback: no ALS available */ }
+	}
+	return _als;
+};
+
+export const run_with_request_id = <R>(id: string, fn: () => R): R => {
+	const als = get_als();
+	return als ? als.run(id, fn) : fn();
+};
+
+export const get_request_id = (): string | undefined => get_als()?.getStore();
 
 interface LogContext {
 	component?: string;
@@ -78,7 +97,7 @@ class Logger {
 			component: this.component,
 			context: {
 				...context,
-				requestId: current_request_id ?? this.requestId,
+				requestId: get_request_id() ?? this.requestId,
 			},
 		};
 		return JSON.stringify(entry);
