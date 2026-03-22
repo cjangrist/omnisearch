@@ -2,54 +2,78 @@
 
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.9-blue?logo=typescript)](https://www.typescriptlang.org/)
 [![MCP](https://img.shields.io/badge/MCP-1.27.1-green)](https://modelcontextprotocol.io/)
+[![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers-orange?logo=cloudflare)](https://workers.cloudflare.com/)
 [![License](https://img.shields.io/badge/license-MIT-lightgrey)](LICENSE)
 
-> **Multi-provider search aggregation with intelligent ranking.**
+> **Multi-provider search, AI answers, and universal URL fetching — aggregated, ranked, and cached at the edge.**
 
-Omnisearch MCP is a production-ready [Model Context Protocol](https://modelcontextprotocol.io/) server that queries **9+ web search engines** and **6+ AI answer providers** in parallel, deduplicates results using [Reciprocal Rank Fusion](https://plg.uwaterloo.ca/~gvcormac/cormacksigir09-rrf.pdf), and returns unified, ranked responses with full provenance.
+Omnisearch MCP is a production-ready [Model Context Protocol](https://modelcontextprotocol.io/) server running on Cloudflare Workers with Durable Objects. It queries **9 web search engines** and **9 AI answer providers** in parallel, fetches content from **any URL** via a **26-provider waterfall**, and returns unified results with global KV caching.
 
 ---
 
-## ✨ What makes this different
+## What makes this different
 
 | Feature | Single Provider | Omnisearch |
 |---------|----------------|------------|
-| **Resilience** | Single point of failure | 9+ providers in parallel; graceful degradation |
-| **Coverage** | One index's blind spots | Cross-engine deduplication finds hidden gems |
-| **Quality** | Raw provider results | RRF ranking + snippet intelligence + quality filters |
-| **AI Answers** | One model's perspective | Consensus across Perplexity, Kagi, Exa, Brave, Tavily, You.com |
-| **Integration** | Custom code per provider | Single MCP tool or REST endpoint |
+| **Resilience** | Single point of failure | 40+ providers with automatic failover |
+| **Search** | One engine's blind spots | 9 engines in parallel, RRF-ranked, cross-deduplicated |
+| **AI Answers** | One model's perspective | Consensus across 9 AI providers with citations |
+| **URL Fetching** | Blocked by paywalls, CAPTCHAs | 26-provider waterfall with social media extraction |
+| **Performance** | Cold on every call | Global KV cache (36h TTL) — cache hits return in ~80ms |
+| **Connectivity** | Timeout on long operations | SSE keepalive with event-boundary buffering |
 
 ---
 
-## 🚀 Quick Start
+## Three Tools
+
+### `web_search` — 9-engine parallel search with RRF ranking
+
+Fans out to Tavily, Brave, Kagi, Exa, Firecrawl, Perplexity, SerpAPI, Linkup, and You.com simultaneously. Deduplicates by URL, ranks using Reciprocal Rank Fusion, merges snippets with Jaccard-based sentence selection, and rescues high-quality results from underrepresented domains.
+
+### `answer` — Consensus AI answers with citations
+
+Queries up to 9 AI providers in parallel (Perplexity, Kagi FastGPT, Exa, Brave Answer, Tavily, ChatGPT, Claude, Gemini, plus Gemini Grounded with web search context). Returns all answers so you can see where providers agree and where they diverge. 2-minute deadline with AbortController cancellation.
+
+### `fetch` — Universal URL content extraction
+
+26-provider deep waterfall that gets clean content from any URL on the internet — paywalled articles, JavaScript SPAs, social media posts, PDFs. Domain breakers route specialized URLs first (YouTube to Supadata for transcripts, Reddit/LinkedIn/TikTok/Instagram to SociaVault for structured extraction), then walks a tiered waterfall of general-purpose fetchers with parallel racing and challenge-page detection.
+
+---
+
+## Quick Start
 
 ```bash
 # 1. Clone and install
-git clone https://github.com/yourusername/omnisearch-mcp.git
-cd omnisearch-mcp
+git clone https://github.com/cjangrist/omnisearch.git
+cd omnisearch
 npm ci
 
-# 2. Configure your API keys (see .env.example)
-cp .env.example .env
-# Edit .env with your provider keys
+# 2. Set your API keys as Cloudflare secrets
+npx wrangler secret put TAVILY_API_KEY
+npx wrangler secret put BRAVE_API_KEY
+# ... add as many providers as you want
 
-# 3. Run locally
-npm run dev
-
-# 4. Deploy
+# 3. Deploy
 npm run deploy
 ```
 
-Configure your MCP client to point to your deployed endpoint.
+Configure your MCP client:
+
+```json
+{
+  "mcpServers": {
+    "omnisearch": {
+      "url": "https://your-worker.workers.dev/mcp"
+    }
+  }
+}
+```
 
 ---
 
-## 🔧 Configuration
+## Configuration
 
-### Required: At least one web search provider
-
-Set any of these environment variables:
+### Web Search Providers (at least one required)
 
 | Variable | Provider | Best For |
 |----------|----------|----------|
@@ -63,9 +87,7 @@ Set any of these environment variables:
 | `YOU_API_KEY` | [You.com](https://you.com) | LLM-optimized snippets |
 | `PERPLEXITY_API_KEY` | [Perplexity](https://perplexity.ai) | AI-cited search |
 
-### Optional: AI Answer providers
-
-For the `answer` tool (consensus across AI search):
+### AI Answer Providers (optional)
 
 | Variable | Provider |
 |----------|----------|
@@ -74,398 +96,191 @@ For the `answer` tool (consensus across AI search):
 | `EXA_API_KEY` | Exa Answer |
 | `BRAVE_ANSWER_API_KEY` | Brave Answer |
 | `TAVILY_API_KEY` | Tavily Answer |
-| `YOU_API_KEY` | You.com Agent |
-| `LLM_SEARCH_BASE_URL` | Custom Claude/Gemini/Codex endpoint |
+| `LLM_SEARCH_BASE_URL` + `LLM_SEARCH_API_KEY` | ChatGPT / Claude / Gemini via OpenAI-compatible endpoint |
+| `GEMINI_GROUNDED_API_KEY` | Gemini with URL context grounding |
 
-### Optional: REST Authentication
+### Fetch Providers (optional, 26 available)
 
-Protect the `/search` REST endpoint:
+The fetch waterfall includes: Tavily, Firecrawl, Linkup, Cloudflare Browser, Diffbot, Olostep, Scrapfly, Scrapedo, Decodo, Zyte, BrightData, Jina, Spider, You, Scrapeless, ScrapingBee, ScrapeGraphAI, Scrappey, ScrapingAnt, Oxylabs, ScraperAPI, LeadMagic, OpenGraph, Supadata (YouTube transcripts), and SociaVault (social media).
+
+### Social Media Extraction (via SociaVault)
+
+| Platform | Content Returned |
+|----------|-----------------|
+| Reddit | Full post + all comments |
+| Twitter/X | Tweet content + metadata |
+| LinkedIn | Post text, author, engagement |
+| YouTube | Video info (transcripts via Supadata) |
+| Instagram | Post info + media URLs |
+| TikTok | Video info + metadata |
+| Facebook | Post content |
+| Threads | Post content |
+| Pinterest | Pin content |
+
+### REST Authentication
 
 ```bash
 OMNISEARCH_API_KEY=your-secret-key-here
 ```
 
-Then use:
-```http
-POST /search
-Authorization: Bearer your-secret-key-here
-Content-Type: application/json
-
-{"query": "latest rust async runtime"}
-```
-
 ---
 
-## 🛠️ Usage
-
-### As an MCP Tool (Recommended)
-
-Configure your MCP client (Claude Desktop, Cursor, etc.):
-
-```json
-{
-  "mcpServers": {
-    "omnisearch": {
-      "url": "https://your-deployment-url/mcp"
-    }
-  }
-}
-```
-
-Now your AI assistant has two powerful tools:
-
-#### `web_search` — Deep web coverage
-
-```typescript
-// The AI calls this tool with:
-{
-  "query": "tokio vs async-std performance 2024",
-  "timeout_ms": 15000,        // Optional: early return for latency
-  "include_snippets": true    // Include page content snippets
-}
-
-// Returns:
-{
-  "query": "tokio vs async-std performance 2024",
-  "total_duration_ms": 3420,
-  "providers_succeeded": [
-    {"provider": "tavily", "duration_ms": 890},
-    {"provider": "brave", "duration_ms": 450},
-    {"provider": "kagi", "duration_ms": 1200}
-  ],
-  "providers_failed": [],
-  "truncation": {
-    "total_before": 47,
-    "kept": 15,
-    "rescued": 3    // Low-rank but diverse domains added back
-  },
-  "web_results": [
-    {
-      "title": "Async Rust: Tokio vs Async-std Benchmarks",
-      "url": "https://example.com/benchmarks",
-      "snippets": ["Tokio shows 15% better throughput..."],
-      "source_providers": ["tavily", "brave"],  // Found by both!
-      "score": 0.892
-    }
-  ]
-}
-```
-
-#### `answer` — Consensus across AI search
-
-```typescript
-// The AI calls:
-{
-  "query": "What are the main differences between tokio and async-std?"
-}
-
-// Returns multiple AI perspectives:
-{
-  "providers_queried": ["perplexity", "kagi_fastgpt", "exa_answer", "web_search"],
-  "providers_succeeded": ["perplexity", "kagi_fastgpt", "exa_answer", "web_search"],
-  "answers": [
-    {
-      "source": "perplexity",
-      "answer": "Tokio is the most mature async runtime...",
-      "duration_ms": 2100,
-      "citations": [
-        {"title": "Tokio Documentation", "url": "https://tokio.rs", "snippet": "..."}
-      ]
-    },
-    {
-      "source": "kagi_fastgpt", 
-      "answer": "While both implement the Future trait...",
-      "duration_ms": 920,
-      "citations": [...]
-    }
-  ]
-}
-```
-
-> **Why multiple answers?** When providers agree, you can be confident. When they disagree, you know the topic has genuine nuance or debate.
-
-### REST API
+## REST API
 
 For non-MCP integrations (OpenWebUI, custom clients):
 
 ```bash
-curl -X POST https://your-deployment-url/search \
+# Search
+curl -X POST https://your-worker.workers.dev/search \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $OMNISEARCH_API_KEY" \
-  -d '{
-    "query": "vector database comparison 2024",
-    "count": 10,
-    "raw": false
-  }'
-```
+  -d '{"query": "vector database comparison", "count": 10}'
 
-Response:
-```json
-[
-  {
-    "link": "https://www.pinecone.io/learn/vector-database/",
-    "title": "What is a Vector Database?",
-    "snippet": "A vector database is a purpose-built database..."
-  }
-]
-```
+# Fetch
+curl -X POST https://your-worker.workers.dev/fetch \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $OMNISEARCH_API_KEY" \
+  -d '{"url": "https://www.linkedin.com/posts/..."}'
 
-Parameters:
-- `query` (string, required, max 2000 chars)
-- `count` (number, optional) — max results to return
-- `raw` (boolean, optional, default false) — skip quality filtering
+# Health
+curl https://your-worker.workers.dev/health
+# {"status":"ok","name":"omnisearch-mcp","version":"1.0.0","providers":40}
+```
 
 ---
 
-## 🏗️ Architecture
+## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                      Request Handler                        │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐      │
-│  │   /health    │  │    /mcp      │  │   /search    │      │
-│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘      │
-│         │                 │                   │             │
-│         └─────────────────┼───────────────────┘             │
-│                           ▼                                 │
-│              ┌─────────────────────────┐                    │
-│              │   Provider Registry     │                    │
-│              │  (auto-detects active   │                    │
-│              │   providers from env)   │                    │
-│              └───────────┬─────────────┘                    │
-│                          ▼                                  │
-│         ┌────────────────────────────────┐                  │
-│         │      Parallel Fanout           │                  │
-│  ┌──────┴──────┐  ┌──────┴──────┐  ┌────┴────┐             │
-│  │   Tavily    │  │    Brave    │  │  Kagi   │  ... 9 total │
-│  └──────┬──────┘  └──────┬──────┘  └────┬────┘             │
-│         └─────────────────┼────────────────┘                │
-│                           ▼                                 │
-│              ┌─────────────────────────┐                    │
-│              │   RRF Ranking Engine    │                    │
-│              │  - Normalize URLs       │                    │
-│              │  - Score by rank position│                   │
-│              │  - Rescue diverse tail   │                    │
-│              └───────────┬─────────────┘                    │
-│                          ▼                                  │
-│              ┌─────────────────────────┐                    │
-│              │ Snippet Intelligence    │                    │
-│              │  - Jaccard dedup        │                    │
-│              │  - Query relevance      │                    │
-│              │  - Greedy sentence merge │                   │
-│              └───────────┬─────────────┘                    │
-│                          ▼                                  │
-│              ┌─────────────────────────┐                    │
-│              │   Quality Filtering     │                    │
-│              │  - Min score thresholds │                    │
-│              │  - Min snippet length   │                    │
-│              │  - Multi-source boost   │                    │
-│              └─────────────────────────┘                    │
-└─────────────────────────────────────────────────────────────┘
+                    ┌─────────────────────────────────────────┐
+                    │         Cloudflare Worker               │
+                    │                                         │
+                    │  /health  /search  /fetch  /mcp         │
+                    │     │        │       │       │          │
+                    │     │        └───┬───┘       │          │
+                    │     │            │           │          │
+                    │     │      REST handlers     │          │
+                    │     │       (auth, CORS)      │          │
+                    │     │            │           │          │
+                    │     │            │      Durable Object  │
+                    │     │            │       (MCP sessions)  │
+                    │     │            │           │          │
+                    │     └────────────┴───────────┘          │
+                    │                  │                       │
+                    │         ┌────────┴────────┐             │
+                    │         │  KV Cache (36h) │             │
+                    │         └────────┬────────┘             │
+                    │                  │ miss                  │
+                    │    ┌─────────────┼─────────────┐        │
+                    │    ▼             ▼             ▼        │
+                    │ Web Search   AI Answer    Fetch Race    │
+                    │  Fanout       Fanout      Waterfall     │
+                    │ (9 engines)  (9 providers) (26 providers)│
+                    │    │             │             │        │
+                    │    ▼             ▼             ▼        │
+                    │ RRF Rank    Deadline +     Domain       │
+                    │ + Snippet   AbortCtrl     Breakers +    │
+                    │  Collapse                 Parallel Race │
+                    └─────────────────────────────────────────┘
 ```
 
 ### Key Design Decisions
 
-1. **Reciprocal Rank Fusion (RRF)**
-   - Formula: `score = Σ 1/(k + rank)` where k=60
-   - Pages found by multiple providers rank higher
-   - No calibration needed across different scoring schemes
+1. **Reciprocal Rank Fusion (RRF)** — `score = Σ 1/(k + rank)` with k=60. Pages found by multiple providers rank higher. No calibration needed across different scoring schemes.
 
-2. **Intelligent Snippet Selection**
-   - When multiple providers return the same URL, we don't just pick one snippet
-   - Bigram Jaccard similarity detects diversity
-   - Diverse snippets are merged with greedy sentence-level set cover
-   - Query-relevance scoring ensures topical focus
+2. **Intelligent Snippet Selection** — When multiple providers return the same URL, snippets are merged using bigram Jaccard similarity to detect diversity, then greedy sentence-level set cover maximizes information density.
 
-3. **Tail Rescue**
-   - After taking top-N results, we scan the tail
-   - Results from novel domains (not in top-N) with good intra-provider rank get rescued
-   - Prevents "9 results from SEO farms, 1 from obscure goldmine" scenarios
+3. **Tail Rescue** — After taking top-N results, high-quality results from underrepresented domains are rescued from the tail, preventing SEO-dominated results from drowning out niche but authoritative sources.
 
-4. **Failure Isolation**
-   - Each provider times out independently
-   - Partial results are returned with failure metadata
-   - Clients always get something useful, never a total timeout
+4. **SSE Keepalive with Event-Boundary Buffering** — The `answer` tool can take up to 2 minutes. An SSE keepalive mechanism injects `event: ping` between complete SSE events (never mid-event), with a write-lock serializer and WHATWG-compliant boundary detection (`\n\n`, `\r\n\r\n`, `\r\r`).
+
+5. **Global KV Cache** — All three tools cache results in Cloudflare KV with 36-hour TTL and SHA-256 hashed keys. Cache hits return in ~80ms regardless of edge location. Only successful results are cached.
+
+6. **AbortController Cancellation** — When deadlines fire, in-flight provider HTTP requests are cancelled via composed AbortSignals (with polyfill for `AbortSignal.any`). Search providers, AI providers, and the web search fanout all respect cancellation.
+
+7. **Failure Isolation** — Each provider runs in its own promise with individual error handling. One provider's failure never crashes others. Partial results are always returned with failure metadata.
 
 ---
 
-## 📁 Project Structure
+## Project Structure
 
 ```
 src/
-├── worker.ts                    # Worker entrypoint
+├── worker.ts                    # Worker + DO entrypoint, SSE keepalive, routing
 ├── types/
 │   └── env.ts                   # Environment binding types
 ├── config/
 │   └── env.ts                   # Config initialization & validation
 ├── common/
-│   ├── types.ts                 # Core interfaces (SearchResult, ProviderError)
-│   ├── http.ts                  # Safe HTTP client with size limits
-│   ├── utils.ts                 # Retry logic, error handling
+│   ├── types.ts                 # Core interfaces (SearchResult, FetchResult, ProviderError)
+│   ├── http.ts                  # Streaming HTTP client with 5MB size guard
+│   ├── utils.ts                 # AbortSignal composition, retry, auth, hashing
+│   ├── logger.ts                # Structured JSON logging with AsyncLocalStorage
 │   ├── search_operators.ts      # Query syntax parsing (site:, filetype:, etc.)
-│   ├── rrf_ranking.ts           # Ranking, dedup, truncation, quality filters
-│   └── snippet_selector.ts      # Snippet scoring, merging, dedup
+│   ├── rrf_ranking.ts           # RRF ranking, dedup, truncation, tail rescue
+│   └── snippet_selector.ts      # Bigram Jaccard + greedy sentence merge
 ├── providers/
-│   ├── index.ts                 # Provider initialization orchestration
-│   ├── search/                  # Web search adapters
-│   │   ├── tavily/
-│   │   ├── brave/
-│   │   ├── kagi/
-│   │   ├── exa/
-│   │   ├── firecrawl/
-│   │   ├── perplexity/
-│   │   ├── serpapi/
-│   │   ├── linkup/
-│   │   └── you/
-│   ├── ai_response/             # AI answer adapters
-│   │   ├── perplexity/
-│   │   ├── kagi_fastgpt/
-│   │   ├── exa_answer/
-│   │   ├── brave_answer/
-│   │   ├── tavily_answer/
-│   │   ├── you_search/
-│   │   └── llm_search/          # Claude/Gemini/Codex bridge
-│   └── unified/
-│       ├── web_search.ts        # Web provider dispatcher
-│       └── ai_search.ts         # AI provider dispatcher
+│   ├── index.ts                 # Provider initialization with atomic swap
+│   ├── search/                  # 9 web search adapters
+│   ├── ai_response/             # 7 AI answer adapters (+ 3 LLM via OpenAI bridge)
+│   ├── fetch/                   # 26 URL fetch adapters
+│   └── unified/                 # Dispatchers (web_search, ai_search, fetch)
 └── server/
-    ├── tools.ts                 # MCP tool registration
-    ├── handlers.ts              # MCP resource handlers
-    ├── web_search_fanout.ts     # Web parallelization logic
-    ├── answer_orchestrator.ts   # AI parallelization logic
-    └── rest_search.ts           # REST endpoint implementation
+    ├── tools.ts                 # MCP tool registration with Zod schemas
+    ├── handlers.ts              # MCP resource handlers (provider status/info)
+    ├── web_search_fanout.ts     # Parallel search dispatch + RRF + KV cache
+    ├── answer_orchestrator.ts   # AI fanout with deadline + abort + KV cache
+    ├── fetch_orchestrator.ts    # Waterfall with breakers + parallel racing + KV cache
+    ├── rest_search.ts           # REST /search endpoint
+    └── rest_fetch.ts            # REST /fetch endpoint
 ```
 
 ---
 
-## 🔌 Adding a New Provider
+## Adding a New Provider
 
-The codebase uses a registry pattern. To add a new provider:
+The codebase uses a registry pattern. To add a new search provider:
 
-1. **Add environment binding** (`src/types/env.ts`):
-```typescript
-NEWPROVIDER_API_KEY?: string;
-```
+1. **Add env binding** in `src/types/env.ts`
+2. **Add config** in `src/config/env.ts`
+3. **Implement adapter** in `src/providers/search/yourprovider/index.ts`
+4. **Register** — one line in `src/providers/unified/web_search.ts`
 
-2. **Add config** (`src/config/env.ts`):
-```typescript
-newprovider: {
-  api_key: undefined as string | undefined,
-  base_url: 'https://api.newprovider.com',
-  timeout: 30000,
-}
-```
-
-3. **Implement adapter** (`src/providers/search/newprovider/index.ts`):
-```typescript
-export class NewproviderSearchProvider implements SearchProvider {
-  name = 'newprovider';
-  description = '...';
-  
-  async search(params: BaseSearchParams): Promise<SearchResult[]> {
-    // Fetch, transform, return
-  }
-}
-
-export const registration = {
-  key: () => config.search.newprovider.api_key,
-};
-```
-
-4. **Register in dispatcher** (`src/providers/unified/web_search.ts`):
-```typescript
-import { NewproviderSearchProvider, registration as newprovider_reg } from '../search/newprovider/index.js';
-
-const PROVIDERS = [
-  // ... existing providers
-  { name: 'newprovider', ...newprovider_reg, factory: () => new NewproviderSearchProvider() },
-] as const;
-```
-
-No other changes needed. The registry auto-detects availability from environment variables.
+No other changes needed. The registry auto-detects availability from environment variables and only instantiates providers with valid API keys.
 
 ---
 
-## 🧪 Development
+## Development
 
 ```bash
-# Type checking
-npm run typecheck
-
-# Local dev server
-npm run dev
-
-# Deploy to Cloudflare Workers
-npm run deploy
+npm run typecheck    # Type checking
+npm run dev          # Local dev server (port 8787)
+npm run deploy       # Deploy to Cloudflare Workers
 ```
 
-### Testing locally with curl
-
 ```bash
-# Health check
+# Health check (shows provider count)
 curl http://localhost:8787/health
 
-# REST search (no auth in dev unless configured)
+# REST search
 curl -X POST http://localhost:8787/search \
   -H "Content-Type: application/json" \
   -d '{"query": "rust memory safety", "count": 5}'
+
+# REST fetch
+curl -X POST http://localhost:8787/fetch \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://www.reddit.com/r/LocalLLaMA/..."}'
 ```
 
 ---
 
-## 🐛 Troubleshooting
+## Acknowledgements
 
-### No providers available
-
-```
-Warning: No API keys found. No providers will be available.
-```
-
-**Fix:** Set at least one provider API key in Cloudflare Workers secrets:
-```bash
-npx wrangler secret put TAVILY_API_KEY
-```
-
-### MCP connection errors
-
-If your MCP client can't connect:
-1. Verify the worker URL is correct
-2. Check CORS preflight works: `curl -X OPTIONS https://<worker>/mcp`
-3. Ensure the worker is deployed (not just running locally with different URL)
-
-### Slow responses
-
-- The `web_search` tool waits for **all** providers by default (best quality)
-- Set `timeout_ms` to return early with partial results
-- Consider geographic proximity: Workers run on Cloudflare's edge, but provider APIs may be US-centric
-
-### Rate limiting
-
-Providers have different limits:
-- **Brave**: 2000 req/month (free tier)
-- **Tavily**: 1000 req/month (free tier)
-- **Kagi**: Pay-per-use
-- **Exa**: Pay-per-use
-
-The server handles rate limit responses gracefully (marks provider failed, continues with others).
+This project is inspired by and based on the work of **Scott Spence** and the original [**mcp-omnisearch**](https://github.com/spences10/mcp-omnisearch) project.
 
 ---
 
-## 🙏 Acknowledgements
-
-This project is a **direct fork inspired by and based on** the excellent work of **Scott Spence** and the original [**mcp-omnisearch**](https://github.com/spences10/mcp-omnisearch) project.
-
-The core idea—aggregating multiple search providers behind a unified MCP interface—originates from that project. This fork extends it with:
-- Cloudflare Workers edge deployment
-- Reciprocal Rank Fusion ranking
-- Intelligent snippet merging
-- REST API endpoint
-- Enhanced provider coverage
-
-Huge thanks to Scott and all contributors to the original project.
-
----
-
-## 📄 License
+## License
 
 MIT License — see [LICENSE](LICENSE) for details.
