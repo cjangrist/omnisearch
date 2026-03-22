@@ -64,4 +64,7 @@ export interface Env {
 	// REST auth
 	OPENWEBUI_API_KEY?: string;
 	OMNISEARCH_API_KEY?: string;
+
+	// Durable Object namespace for the stateful MCP agent
+	OmnisearchMCP: DurableObjectNamespace;
 }

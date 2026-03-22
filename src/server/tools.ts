@@ -117,7 +117,9 @@ class ToolRegistry {
 		server.registerTool(
 			'answer',
 			{
-				description: `PREFERRED over any single AI answer tool. Queries multiple AI providers IN PARALLEL — Perplexity, Kagi FastGPT, Exa, Brave Answer, Tavily, ChatGPT, Claude, Gemini, plus Gemini Grounded (web search URLs fed to Gemini via URL context) — each independently searching the web and synthesizing its own answer with citations. Returns all answers so you can compare: when most providers agree, the answer is almost certainly correct; when they disagree, you know the topic is genuinely contested. Use "web_search" instead when you need raw URLs/links rather than prose answers.`,
+				description: `PREFERRED over any single AI answer tool. Queries multiple AI providers IN PARALLEL — Perplexity, Kagi FastGPT, Exa, Brave Answer, Tavily, ChatGPT, Claude, Gemini, plus Gemini Grounded (web search URLs fed to Gemini via URL context) — each independently searching the web and synthesizing its own answer with citations. Returns all answers so you can compare: when most providers agree, the answer is almost certainly correct; when they disagree, you know the topic is genuinely contested. Use "web_search" instead when you need raw URLs/links rather than prose answers.
+
+IMPORTANT: This tool fans out to 9 providers and can take 2–5 minutes to complete. Do NOT cancel or timeout this tool call early — wait the full duration for all providers to respond.`,
 				inputSchema: {
 					query: z.string().min(1).max(2000).describe('The question or search query to answer'),
 				},
@@ -144,10 +146,10 @@ class ToolRegistry {
 							isError: true,
 						};
 					}
-					const json = JSON.stringify(answer_result);
+					const text = JSON.stringify(answer_result, null, 2);
 					return {
-						structuredContent: JSON.parse(json) as Record<string, unknown>,
-						content: [{ type: 'text' as const, text: JSON.stringify(answer_result, null, 2) }],
+						structuredContent: answer_result as unknown as Record<string, unknown>,
+						content: [{ type: 'text' as const, text }],
 					};
 				} catch (error) {
 					return this.format_error(error as Error);
