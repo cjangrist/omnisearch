@@ -306,10 +306,10 @@ export default {
 			logger.debug('Health check request', { op: 'health_check', request_id });
 			const duration = Date.now() - start_time;
 			logger.response(request.method, url.pathname, 200, duration, { request_id });
-			return new Response(
+			return add_cors_headers(new Response(
 				JSON.stringify({ status: 'ok', name: SERVER_NAME, version: SERVER_VERSION }),
 				{ status: 200, headers: { 'Content-Type': 'application/json' } },
-			);
+			));
 		}
 
 		// MCP: delegate to the McpAgent DO handler.
@@ -336,6 +336,6 @@ export default {
 
 		// 404
 		logger.warn('Route not found', { op: 'not_found', request_id, path: url.pathname });
-		return new Response('Not found', { status: 404 });
+		return add_cors_headers(Response.json({ error: 'Not found' }, { status: 404 }));
 	},
 } satisfies ExportedHandler<Env>;
