@@ -5,21 +5,32 @@ import { ErrorType, ProviderError } from './types.js';
 
 // Combine an external abort signal with a provider-level timeout into a single signal.
 // Returns the combined signal, or just the timeout if no external signal is provided.
-export const make_signal = (timeout_ms: number, external?: AbortSignal): AbortSignal =>
-	external
-		? AbortSignal.any([external, AbortSignal.timeout(timeout_ms)])
-		: AbortSignal.timeout(timeout_ms);
+export const make_signal = (timeout_ms: number, external?: AbortSignal): AbortSignal => {
+	if (!external) return AbortSignal.timeout(timeout_ms);
+	if (typeof AbortSignal.any === 'function') {
+		return AbortSignal.any([external, AbortSignal.timeout(timeout_ms)]);
+	}
+	// Polyfill for runtimes without AbortSignal.any
+	const controller = new AbortController();
+	const on_abort = () => controller.abort();
+	external.addEventListener('abort', on_abort, { once: true });
+	const timer = setTimeout(on_abort, timeout_ms);
+	controller.signal.addEventListener('abort', () => clearTimeout(timer), { once: true });
+	return controller.signal;
+};
+
+const text_encoder = new TextEncoder();
+const CONTROL_CHARS_RE = /[\x00-\x1F\x7F]/g;
 
 export const timing_safe_equal = (a: string, b: string): boolean => {
-	const encoder = new TextEncoder();
-	const a_buf = encoder.encode(a);
-	const b_buf = encoder.encode(b);
+	const a_buf = text_encoder.encode(a);
+	const b_buf = text_encoder.encode(b);
 	if (a_buf.byteLength !== b_buf.byteLength) return false;
 	return crypto.subtle.timingSafeEqual(a_buf, b_buf);
 };
 
 export const sanitize_for_log = (s: string): string =>
-	s.replace(/[\x00-\x1F\x7F]/g, '').slice(0, 200);
+	s.replace(CONTROL_CHARS_RE, '').slice(0, 200);
 
 const normalize_api_key = (raw: string): string => {
 	const trimmed = raw.trim();
