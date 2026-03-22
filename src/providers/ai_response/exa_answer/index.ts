@@ -6,6 +6,7 @@ import {
 } from '../../../common/types.js';
 import {
 	handle_provider_error,
+	make_signal,
 	validate_api_key,
 } from '../../../common/utils.js';
 import { config } from '../../../config/env.js';
@@ -83,7 +84,7 @@ export class ExaAnswerProvider implements SearchProvider {
 						'Content-Type': 'application/json',
 					},
 					body: JSON.stringify(request_body),
-					signal: AbortSignal.timeout(config.ai_response.exa_answer.timeout),
+					signal: make_signal(config.ai_response.exa_answer.timeout, params.signal),
 				},
 			);
 

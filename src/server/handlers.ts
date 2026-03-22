@@ -70,6 +70,12 @@ export const setup_handlers = (server: McpServer) => {
 				);
 			}
 
+			// Derive capabilities from which category the provider belongs to
+			const capabilities: string[] = [];
+			if (active_providers.search.has(providerName)) capabilities.push('web_search');
+			if (active_providers.ai_response.has(providerName)) capabilities.push('ai_response');
+			if (active_providers.fetch.has(providerName)) capabilities.push('fetch');
+
 			return {
 				contents: [
 					{
@@ -79,11 +85,7 @@ export const setup_handlers = (server: McpServer) => {
 							{
 								name: providerName,
 								status: 'active',
-								capabilities: ['web_search', 'news_search'],
-								rate_limits: {
-									requests_per_minute: 60,
-									requests_per_day: 1000,
-								},
+								capabilities,
 							},
 							null,
 							2,

@@ -11,6 +11,33 @@ const logger = loggers.search();
 
 const DEFAULT_TOP_N = 15;
 
+// Short-lived cache to deduplicate identical queries across tool calls
+// (e.g., web_search followed by answer with the same query, or gemini-grounded
+// inside the answer fanout). TTL is short to avoid stale results.
+const CACHE_TTL_MS = 30_000;
+const fanout_cache = new Map<string, { result: FanoutResult; expires: number }>();
+
+const get_cached = (query: string): FanoutResult | undefined => {
+	const entry = fanout_cache.get(query);
+	if (!entry) return undefined;
+	if (Date.now() > entry.expires) {
+		fanout_cache.delete(query);
+		return undefined;
+	}
+	return entry.result;
+};
+
+const set_cached = (query: string, result: FanoutResult) => {
+	fanout_cache.set(query, { result, expires: Date.now() + CACHE_TTL_MS });
+	// Evict stale entries lazily (keep map bounded)
+	if (fanout_cache.size > 50) {
+		const now = Date.now();
+		for (const [k, v] of fanout_cache) {
+			if (now > v.expires) fanout_cache.delete(k);
+		}
+	}
+};
+
 export interface FanoutResult {
 	total_duration_ms: number;
 	providers_succeeded: Array<{ provider: string; duration_ms: number }>;
@@ -126,6 +153,13 @@ export const run_web_search_fanout = async (
 	query: string,
 	options?: { skip_quality_filter?: boolean; limit?: number; timeout_ms?: number },
 ): Promise<FanoutResult> => {
+	// Return cached result if available (deduplicates gemini-grounded web search inside answer fanout)
+	const cached = get_cached(query);
+	if (cached) {
+		logger.debug('Returning cached fanout result', { op: 'fanout_cache_hit', query: query.slice(0, 100) });
+		return cached;
+	}
+
 	const per_provider_limit = options?.limit ?? DEFAULT_TOP_N;
 	const active = get_active_search_providers();
 
@@ -171,12 +205,15 @@ export const run_web_search_fanout = async (
 		final_result_count: web_results.length,
 	});
 
-	return {
+	const result: FanoutResult = {
 		total_duration_ms: total_duration,
 		providers_succeeded,
 		providers_failed,
 		web_results,
 	};
+
+	set_cached(query, result);
+	return result;
 };
 
 export { truncate_web_results };

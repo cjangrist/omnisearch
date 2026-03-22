@@ -73,7 +73,6 @@ const CONFIG = {
 			'[Chrome](https://www.google.com/chrome/',
 			'does not have access to this endpoint',
 		],
-		http_codes: [403, 429, 503],
 	},
 };
 
@@ -128,11 +127,6 @@ const try_provider = async (
 	return result;
 };
 
-// ── Parallel heuristic: pick longest content ─────────────────────
-
-const pick_best = (results: Array<{ provider: string; result: FetchResult }>) =>
-	results.reduce((a, b) => (b.result.content.length > a.result.content.length ? b : a));
-
 // ── Step executors ───────────────────────────────────────────────
 
 interface StepContext {
@@ -167,27 +161,29 @@ const run_parallel = async (
 	if (available.length === 0) return undefined;
 
 	ctx.attempted.push(...available);
-	const t0 = Date.now();
 
-	const settled = await Promise.allSettled(
-		available.map((p) => try_provider(ctx.unified, ctx.url, p).then((r) => ({ provider: p, result: r }))),
-	);
-
-	const successes: Array<{ provider: string; result: FetchResult }> = [];
-	for (let i = 0; i < settled.length; i++) {
-		const s = settled[i];
-		if (s.status === 'fulfilled') {
-			successes.push(s.value);
-		} else {
-			ctx.failed.push({
-				provider: available[i],
-				error: s.reason instanceof Error ? s.reason.message : String(s.reason),
-				duration_ms: Date.now() - t0,
+	// Race providers — return the first success instead of waiting for all.
+	// Each provider promise individually tracks its own failure for logging.
+	const promises = available.map((p) => {
+		const t0 = Date.now();
+		return try_provider(ctx.unified, ctx.url, p)
+			.then((r) => ({ provider: p, result: r }))
+			.catch((error) => {
+				ctx.failed.push({
+					provider: p,
+					error: error instanceof Error ? error.message : String(error),
+					duration_ms: Date.now() - t0,
+				});
+				throw error; // re-throw so Promise.any skips it
 			});
-		}
-	}
+	});
 
-	return successes.length > 0 ? pick_best(successes) : undefined;
+	try {
+		return await Promise.any(promises);
+	} catch {
+		// AggregateError — all providers failed (already recorded in ctx.failed above)
+		return undefined;
+	}
 };
 
 const run_sequential = async (
@@ -256,7 +252,7 @@ export const run_fetch_race = async (
 	const attempted: string[] = [];
 	const failed: Array<{ provider: string; error: string; duration_ms: number }> = [];
 
-	// Explicit provider mode (no waterfall)
+	// Explicit provider mode (no waterfall) — still validate against challenge/empty detection
 	if (options?.provider) {
 		const provider = options.provider;
 		attempted.push(provider);
@@ -266,6 +262,13 @@ export const run_fetch_race = async (
 			url: url.slice(0, 200),
 		});
 		const result = await fetch_provider.fetch_url(url, provider);
+		if (is_fetch_failure(result)) {
+			logger.warn('Explicit provider returned blocked/empty content', {
+				op: 'fetch_explicit_failure',
+				provider,
+				content_length: result.content?.length ?? 0,
+			});
+		}
 		return build_result(start_time, provider, result, attempted, failed);
 	}
 

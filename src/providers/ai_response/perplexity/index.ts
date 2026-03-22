@@ -6,6 +6,7 @@ import {
 } from '../../../common/types.js';
 import {
 	handle_provider_error,
+	make_signal,
 	validate_api_key,
 } from '../../../common/utils.js';
 import { config } from '../../../config/env.js';
@@ -50,7 +51,7 @@ export class PerplexityProvider implements SearchProvider {
 		'AI-powered response generation combining real-time web search with advanced language models. Best for complex queries requiring reasoning and synthesis across multiple sources. Features contextual memory for follow-up questions.';
 
 	async search(params: BaseSearchParams): Promise<SearchResult[]> {
-		const response = await this.get_answer(params.query);
+		const response = await this.get_answer(params.query, params.signal);
 
 		// Return the full answer as a single result
 		const results: SearchResult[] = [
@@ -90,7 +91,7 @@ export class PerplexityProvider implements SearchProvider {
 		return filtered_results;
 	}
 
-	async get_answer(query: string): Promise<PerplexityResponse> {
+	async get_answer(query: string, external_signal?: AbortSignal): Promise<PerplexityResponse> {
 		const api_key = validate_api_key(
 			config.ai_response.perplexity.api_key,
 			this.name,
@@ -118,9 +119,7 @@ export class PerplexityProvider implements SearchProvider {
 						temperature: TEMPERATURE,
 						max_tokens: MAX_TOKENS,
 					}),
-					signal: AbortSignal.timeout(
-						config.ai_response.perplexity.timeout,
-					),
+					signal: make_signal(config.ai_response.perplexity.timeout, external_signal),
 				},
 			);
 

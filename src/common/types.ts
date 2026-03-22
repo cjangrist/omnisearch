@@ -14,6 +14,7 @@ export interface BaseSearchParams {
 	limit?: number;
 	include_domains?: string[];
 	exclude_domains?: string[];
+	signal?: AbortSignal;
 }
 
 // Provider interfaces

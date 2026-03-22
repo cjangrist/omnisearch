@@ -5,7 +5,7 @@
 
 import { http_json } from '../../../common/http.js';
 import type { SearchResult } from '../../../common/types.js';
-import { handle_provider_error } from '../../../common/utils.js';
+import { handle_provider_error, make_signal } from '../../../common/utils.js';
 import { config } from '../../../config/env.js';
 
 const PROVIDER_NAME = 'gemini-grounded';
@@ -60,6 +60,7 @@ const build_prompt = (query: string, sources: GroundingSource[]): string => {
 export async function gemini_grounded_search(
 	query: string,
 	sources: GroundingSource[],
+	external_signal?: AbortSignal,
 ): Promise<SearchResult[]> {
 	const cfg = config.ai_response.gemini_grounded;
 	if (!cfg.api_key) {
@@ -86,7 +87,7 @@ export async function gemini_grounded_search(
 					contents: [{ parts: [{ text: prompt }] }],
 					tools: [{ url_context: {} }],
 				}),
-				signal: AbortSignal.timeout(cfg.timeout),
+				signal: make_signal(cfg.timeout, external_signal),
 			},
 		);
 
