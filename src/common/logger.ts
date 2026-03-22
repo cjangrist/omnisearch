@@ -3,32 +3,18 @@
 
 // AsyncLocalStorage for request-scoped context — prevents request ID cross-contamination
 // when CF Workers process concurrent requests in the same isolate.
-// Available via nodejs_compat flag in wrangler.toml.
+// Requires nodejs_compat flag in wrangler.toml.
+import { AsyncLocalStorage } from 'node:async_hooks';
 
 type LogLevel = 'trace' | 'debug' | 'info' | 'warn' | 'error';
 
-// Lazy-init to avoid top-level import issues with CF Workers bundler
-let _als: { getStore(): string | undefined; run<R>(store: string, callback: () => R): R } | undefined;
+const request_id_store = new AsyncLocalStorage<string>();
 
-const get_als = () => {
-	if (!_als) {
-		try {
-			// Dynamic import at runtime — nodejs_compat makes this available
-			const mod = (globalThis as unknown as { process?: unknown }).process
-				? (eval('require')('node:async_hooks') as { AsyncLocalStorage: new () => typeof _als })
-				: undefined;
-			if (mod) _als = new mod.AsyncLocalStorage();
-		} catch { /* fallback: no ALS available */ }
-	}
-	return _als;
-};
+export const run_with_request_id = <R>(id: string, fn: () => R): R =>
+	request_id_store.run(id, fn);
 
-export const run_with_request_id = <R>(id: string, fn: () => R): R => {
-	const als = get_als();
-	return als ? als.run(id, fn) : fn();
-};
-
-export const get_request_id = (): string | undefined => get_als()?.getStore();
+export const get_request_id = (): string | undefined =>
+	request_id_store.getStore();
 
 interface LogContext {
 	component?: string;

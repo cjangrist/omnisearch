@@ -16,16 +16,17 @@ import {
 	get_active_fetch_providers,
 } from '../providers/unified/fetch.js';
 import { kv_cache } from '../config/env.js';
+import { hash_key } from '../common/utils.js';
 
 const logger = loggers.fetch();
 
-const KV_FETCH_TTL_SECONDS = 86_400; // 24 hours
-const KV_FETCH_PREFIX = 'fetch:';
+const KV_FETCH_TTL_SECONDS = 129_600; // 36 hours
 
 const get_fetch_cached = async (url: string): Promise<FetchRaceResult | undefined> => {
 	if (!kv_cache) return undefined;
 	try {
-		return await kv_cache.get(KV_FETCH_PREFIX + url, 'json') as FetchRaceResult | undefined;
+		const key = await hash_key('fetch:', url);
+		return await kv_cache.get(key, 'json') as FetchRaceResult | undefined;
 	} catch {
 		return undefined;
 	}
@@ -34,7 +35,8 @@ const get_fetch_cached = async (url: string): Promise<FetchRaceResult | undefine
 const set_fetch_cached = async (url: string, result: FetchRaceResult): Promise<void> => {
 	if (!kv_cache) return;
 	try {
-		await kv_cache.put(KV_FETCH_PREFIX + url, JSON.stringify(result), { expirationTtl: KV_FETCH_TTL_SECONDS });
+		const key = await hash_key('fetch:', url);
+		await kv_cache.put(key, JSON.stringify(result), { expirationTtl: KV_FETCH_TTL_SECONDS });
 	} catch (err) {
 		logger.warn('KV fetch cache write failed', { op: 'kv_write_error', error: err instanceof Error ? err.message : String(err) });
 	}

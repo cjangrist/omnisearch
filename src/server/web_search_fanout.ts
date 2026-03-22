@@ -4,22 +4,17 @@
 import type { SearchResult } from '../common/types.js';
 import { loggers } from '../common/logger.js';
 import { rank_and_merge, truncate_web_results, type RankedWebResult } from '../common/rrf_ranking.js';
-import { retry_with_backoff } from '../common/utils.js';
+import { retry_with_backoff, hash_key } from '../common/utils.js';
 import { get_active_search_providers, type WebSearchProvider } from '../providers/unified/web_search.js';
 import { kv_cache } from '../config/env.js';
 
 const logger = loggers.search();
 
 const DEFAULT_TOP_N = 15;
-const KV_SEARCH_TTL_SECONDS = 86_400; // 24 hours
-const KV_SEARCH_PREFIX = 'search:';
+const KV_SEARCH_TTL_SECONDS = 129_600; // 36 hours
 
-// Cache key includes options that affect result quality (not latency).
-// timeout_ms is excluded — it affects speed, not what results are returned.
-const make_cache_key = (query: string, options?: { skip_quality_filter?: boolean }): string => {
-	const base = options?.skip_quality_filter ? `${query}\0sqf=true` : query;
-	return KV_SEARCH_PREFIX + base;
-};
+const make_cache_key = (query: string, options?: { skip_quality_filter?: boolean }): Promise<string> =>
+	hash_key('search:', options?.skip_quality_filter ? `${query}\0sqf=true` : query);
 
 const get_cached = async (key: string): Promise<FanoutResult | undefined> => {
 	if (!kv_cache) return undefined;
@@ -178,7 +173,7 @@ export const run_web_search_fanout = async (
 	options?: { skip_quality_filter?: boolean; limit?: number; timeout_ms?: number; signal?: AbortSignal },
 ): Promise<FanoutResult> => {
 	// Return cached result if available (deduplicates gemini-grounded web search inside answer fanout)
-	const cache_key = make_cache_key(query, options);
+	const cache_key = await make_cache_key(query, options);
 	const cached = await get_cached(cache_key);
 	if (cached) {
 		logger.debug('Returning cached fanout result', { op: 'fanout_cache_hit', query: query.slice(0, 100) });

@@ -34,6 +34,14 @@ export const timing_safe_equal = (a: string, b: string): boolean => {
 export const sanitize_for_log = (s: string): string =>
 	s.replace(CONTROL_CHARS_RE, '').slice(0, 200);
 
+// SHA-256 hash for KV cache keys — keeps keys under the 512-byte KV limit
+// regardless of query length (up to 2000 chars).
+export const hash_key = async (prefix: string, value: string): Promise<string> => {
+	const buf = await crypto.subtle.digest('SHA-256', text_encoder.encode(value));
+	const hex = [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
+	return `${prefix}${hex}`;
+};
+
 // Shared REST authentication — returns a 401 Response if auth fails, or null on success.
 export const authenticate_rest_request = (
 	request: Request,
