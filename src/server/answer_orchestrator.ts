@@ -120,9 +120,12 @@ const execute_tasks = async (
 		providers: tasks.map((t) => t.name),
 	});
 
+	let is_done = false;
+
 	const tracked = tasks.map((task) =>
 		task.promise.then(
 			(value) => {
+				if (is_done) return; // post-deadline — don't mutate arrays
 				const duration_ms = Date.now() - start_time;
 				completed_count++;
 				completed_set.add(task.name);
@@ -139,6 +142,7 @@ const execute_tasks = async (
 				});
 			},
 			(reason) => {
+				if (is_done) return; // post-deadline — don't mutate arrays
 				const duration_ms = Date.now() - start_time;
 				completed_count++;
 				completed_set.add(task.name);
@@ -178,6 +182,7 @@ const execute_tasks = async (
 		]);
 		const result = await winner;
 		clearTimeout(timer_id!);
+		is_done = true; // prevent late-arriving promises from mutating arrays
 		if (result === 'deadline' && abort_controller) {
 			abort_controller.abort();
 		}
