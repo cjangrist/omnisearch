@@ -12,10 +12,12 @@ export const make_signal = (timeout_ms: number, external?: AbortSignal): AbortSi
 	}
 	// Polyfill for runtimes without AbortSignal.any
 	const controller = new AbortController();
-	const on_abort = () => controller.abort();
+	const on_abort = () => {
+		clearTimeout(timer);
+		controller.abort();
+	};
 	external.addEventListener('abort', on_abort, { once: true });
 	const timer = setTimeout(on_abort, timeout_ms);
-	controller.signal.addEventListener('abort', () => clearTimeout(timer), { once: true });
 	return controller.signal;
 };
 
