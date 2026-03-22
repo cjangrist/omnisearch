@@ -218,8 +218,8 @@ export const run_web_search_fanout = async (
 		web_results,
 	};
 
-	// Fire-and-forget KV cache write — don't block the response
-	set_cached(cache_key, result);
+	// Await KV write — prevents REST path from killing the promise after response is sent
+	await set_cached(cache_key, result);
 	return result;
 };
 
