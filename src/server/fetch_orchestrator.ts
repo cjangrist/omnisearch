@@ -306,11 +306,11 @@ export const run_fetch_race = async (
 		});
 		const result = await fetch_provider.fetch_url(url, provider);
 		if (is_fetch_failure(result)) {
-			logger.warn('Explicit provider returned blocked/empty content', {
-				op: 'fetch_explicit_failure',
+			throw new ProviderError(
+				ErrorType.PROVIDER_ERROR,
+				`${provider} returned blocked or empty content (${result.content?.length ?? 0} chars)`,
 				provider,
-				content_length: result.content?.length ?? 0,
-			});
+			);
 		}
 		return build_result(start_time, provider, result, attempted, failed);
 	}

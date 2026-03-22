@@ -34,6 +34,21 @@ export const timing_safe_equal = (a: string, b: string): boolean => {
 export const sanitize_for_log = (s: string): string =>
 	s.replace(CONTROL_CHARS_RE, '').slice(0, 200);
 
+// Shared REST authentication — returns a 401 Response if auth fails, or null on success.
+export const authenticate_rest_request = (
+	request: Request,
+	expected_key: string | undefined,
+): Response | null => {
+	const key = (expected_key ?? '').trim();
+	if (!key) return null; // no auth required
+	const auth = request.headers.get('Authorization') ?? '';
+	const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+	if (!token || !timing_safe_equal(token, key)) {
+		return Response.json({ error: 'Unauthorized' }, { status: 401 });
+	}
+	return null;
+};
+
 const normalize_api_key = (raw: string): string => {
 	const trimmed = raw.trim();
 	return trimmed.replace(/^(['"])(.*)\1$/, '$2');

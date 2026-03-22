@@ -5,7 +5,7 @@
 
 import { ErrorType, ProviderError } from '../common/types.js';
 import { loggers } from '../common/logger.js';
-import { timing_safe_equal, sanitize_for_log } from '../common/utils.js';
+import { authenticate_rest_request, sanitize_for_log } from '../common/utils.js';
 import { get_fetch_provider } from './tools.js';
 import { run_fetch_race } from './fetch_orchestrator.js';
 import { get_active_fetch_providers, type FetchProviderName } from '../providers/unified/fetch.js';
@@ -18,23 +18,8 @@ export async function handle_rest_fetch(
 ): Promise<Response> {
 	const start_time = Date.now();
 
-	// Validate Bearer token if OMNISEARCH_API_KEY is set
-	const expected_key = (OPENWEBUI_API_KEY || OMNISEARCH_API_KEY || '').trim();
-	if (expected_key) {
-		const auth = request.headers.get('Authorization') ?? '';
-		const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
-		if (!token || !timing_safe_equal(token, expected_key)) {
-			logger.warn('Authentication failed', {
-				op: 'auth',
-				has_token: !!token,
-				status: 401,
-			});
-			return Response.json(
-				{ error: 'Unauthorized' },
-				{ status: 401 },
-			);
-		}
-	}
+	const auth_error = authenticate_rest_request(request, OPENWEBUI_API_KEY || OMNISEARCH_API_KEY);
+	if (auth_error) return auth_error;
 
 	// Reject oversized request bodies
 	const content_length = parseInt(request.headers.get('content-length') ?? '0', 10) || 0;
