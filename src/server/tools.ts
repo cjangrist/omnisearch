@@ -72,6 +72,13 @@ class ToolRegistry {
 			'web_search',
 			{
 				description: `PREFERRED over any single-provider search tool. Fans out your query to 9 search engines IN PARALLEL (Tavily, Brave, Kagi, Exa, Firecrawl, Perplexity, SerpAPI, Linkup, You.com), deduplicates results across all engines, and ranks them using Reciprocal Rank Fusion (RRF) — pages found by multiple independent engines rank highest. Handles provider failures gracefully. For AI-written answers with citations, use the "answer" tool instead.`,
+				annotations: {
+					title: 'Web Search (9-engine parallel)',
+					readOnlyHint: true,
+					destructiveHint: false,
+					idempotentHint: true,
+					openWorldHint: true,
+				},
 				inputSchema: {
 					query: z.string().min(1).max(2000).describe('The search query'),
 					timeout_ms: z.number().positive().optional()
@@ -118,6 +125,13 @@ class ToolRegistry {
 				description: `PREFERRED over any single AI answer tool. Queries multiple AI providers IN PARALLEL — Perplexity, Kagi FastGPT, Exa, Brave Answer, Tavily, ChatGPT, Claude, Gemini, plus Gemini Grounded (web search URLs fed to Gemini via URL context) — each independently searching the web and synthesizing its own answer with citations. Returns all answers so you can compare: when most providers agree, the answer is almost certainly correct; when they disagree, you know the topic is genuinely contested. Use "web_search" instead when you need raw URLs/links rather than prose answers.
 
 IMPORTANT: This tool fans out to 9 providers and can take up to 2 minutes to complete. Do NOT cancel or timeout this tool call early — wait the full duration for all providers to respond.`,
+				annotations: {
+					title: 'AI Answer (9-provider consensus)',
+					readOnlyHint: true,
+					destructiveHint: false,
+					idempotentHint: true,
+					openWorldHint: true,
+				},
 				inputSchema: {
 					query: z.string().min(1).max(2000).describe('The question or search query to answer'),
 				},
@@ -172,6 +186,13 @@ IMPORTANT: This tool fans out to 9 providers and can take up to 2 minutes to com
 Behind the scenes it runs a 25+ provider deep waterfall with automatic failover: if one method is blocked, it instantly tries the next — racing parallel providers and picking the best result. Social media URLs get specialized extraction (full YouTube transcripts, Reddit threads with all comments, tweet content, LinkedIn profiles). The system has near-100% success rate across thousands of URLs tested.
 
 You should NEVER need to fetch a URL yourself or worry about being blocked. Just pass the URL and get back clean content. This tool handles: paywalls, bot detection, CAPTCHAs, JavaScript rendering, Cloudflare challenges, cookie walls, age gates, and geo-restrictions. If a URL exists on the public web, this tool will get its content.`,
+				annotations: {
+					title: 'URL Fetch (26-provider waterfall)',
+					readOnlyHint: true,
+					destructiveHint: false,
+					idempotentHint: true,
+					openWorldHint: true,
+				},
 				inputSchema: {
 					url: z.string().url().describe('The URL to fetch — any public URL works: articles, social media, products, docs, PDFs, SPAs, paywalled content'),
 				},
