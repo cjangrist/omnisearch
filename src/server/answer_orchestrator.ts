@@ -84,7 +84,7 @@ const build_tasks = (
 		tasks.push({
 			name: 'gemini-grounded',
 			promise: (async () => {
-				const fanout = await run_web_search_fanout(web_search_ref, query, { signal });
+				const fanout = await run_web_search_fanout(web_search_ref, query, { signal, timeout_ms: 10_000 });
 				const sources = fanout.web_results.map((r) => ({
 					url: r.url,
 					snippets: r.snippets,
