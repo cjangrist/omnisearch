@@ -265,7 +265,13 @@ export default {
 				});
 				return add_cors_headers(Response.json({ error: 'Internal server error' }, { status: 500 }));
 			}
-			const response = await handle_rest_search(request);
+			let response: Response;
+			try {
+				response = await handle_rest_search(request);
+			} catch (err) {
+				logger.error('REST search handler error', { op: 'rest_search', request_id, error: err instanceof Error ? err.message : String(err) });
+				return add_cors_headers(Response.json({ error: 'Internal server error' }, { status: 500 }));
+			}
 			const duration = Date.now() - start_time;
 			logger.response(request.method, url.pathname, response.status, duration, { request_id });
 			return add_cors_headers(response);
@@ -283,10 +289,16 @@ export default {
 				});
 				return add_cors_headers(Response.json({ error: 'Internal server error' }, { status: 500 }));
 			}
-			const response = await handle_rest_fetch(request);
+			let fetch_response: Response;
+			try {
+				fetch_response = await handle_rest_fetch(request);
+			} catch (err) {
+				logger.error('REST fetch handler error', { op: 'rest_fetch', request_id, error: err instanceof Error ? err.message : String(err) });
+				return add_cors_headers(Response.json({ error: 'Internal server error' }, { status: 500 }));
+			}
 			const duration = Date.now() - start_time;
-			logger.response(request.method, url.pathname, response.status, duration, { request_id });
-			return add_cors_headers(response);
+			logger.response(request.method, url.pathname, fetch_response.status, duration, { request_id });
+			return add_cors_headers(fetch_response);
 		}
 
 		// Health check
