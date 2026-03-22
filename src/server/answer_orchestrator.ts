@@ -14,9 +14,10 @@ const logger = loggers.aiResponse();
 const GLOBAL_TIMEOUT_MS = 120_000; // 2 min hard deadline for the entire fanout
 const PROGRESS_INTERVAL_MS = 5_000;
 
-// Providers routed through the oauth-llm proxy — consistently slowest.
-// We return early if these are the only ones still pending (at most 1 straggler).
-const LLM_PROXY_PROVIDERS = new Set(['chatgpt', 'claude', 'gemini']);
+// Called every PROGRESS_INTERVAL_MS while providers are still running.
+// Used by the MCP tool handler to push SSE keepalive notifications.
+export type ProgressCallback = (completed: number, total: number, pending: string[]) => Promise<void>;
+
 
 interface ProviderTask {
 	name: string;
@@ -108,6 +109,7 @@ const build_tasks = (
 
 const execute_tasks = async (
 	tasks: ProviderTask[],
+	on_progress?: ProgressCallback,
 ): Promise<{ answers: AnswerEntry[]; failed: FailedProvider[] }> => {
 	const answers: AnswerEntry[] = [];
 	const failed: FailedProvider[] = [];
@@ -122,26 +124,6 @@ const execute_tasks = async (
 		providers: tasks.map((t) => t.name),
 	});
 
-	// Resolves when we can return early (only LLM proxy stragglers remain)
-	let resolve_early!: () => void;
-	const early_exit = new Promise<void>((resolve) => { resolve_early = resolve; });
-
-	const check_early_exit = () => {
-		const pending = tasks.filter((t) => !completed_set.has(t.name));
-		if (pending.length === 0) { resolve_early(); return; }
-		// Early exit disabled by default — wait for all providers.
-		// Uncomment below to skip the last LLM proxy straggler:
-		// if (pending.length <= 1 && pending.every((t) => LLM_PROXY_PROVIDERS.has(t.name))) {
-		// 	logger.info('Early exit: only LLM proxy straggler(s) remaining', {
-		// 		op: 'early_exit',
-		// 		pending: pending.map((t) => t.name),
-		// 		completed: completed_count,
-		// 		total: total_count,
-		// 	});
-		// 	resolve_early();
-		// }
-	};
-
 	const tracked = tasks.map((task) =>
 		task.promise.then(
 			(value) => {
@@ -151,7 +133,6 @@ const execute_tasks = async (
 				const entry = { ...build_answer_entry(task.name, value), duration_ms };
 				answers.push(entry);
 
-				// Log metadata only — not full answer text (avoids 10KB+ log bloat)
 				logger.info('Provider completed', {
 					op: 'provider_done',
 					provider: task.name,
@@ -160,7 +141,6 @@ const execute_tasks = async (
 					answer_length: entry.answer.length,
 					citation_count: entry.citations.length,
 				});
-				check_early_exit();
 			},
 			(reason) => {
 				const duration_ms = Date.now() - start_time;
@@ -176,12 +156,11 @@ const execute_tasks = async (
 					duration_ms,
 					error: error_msg,
 				});
-				check_early_exit();
 			},
 		),
 	);
 
-	const progress_interval = setInterval(() => {
+	const progress_interval = setInterval(async () => {
 		const pending = tasks.filter((t) => !completed_set.has(t.name)).map((t) => t.name);
 		if (pending.length > 0) {
 			logger.debug('Waiting for providers', {
@@ -191,14 +170,24 @@ const execute_tasks = async (
 				done: Array.from(completed_set),
 				pending,
 			});
+			if (on_progress) {
+				try {
+					await on_progress(completed_count, total_count, pending);
+				} catch (cb_err) {
+					// Swallow — a dropped SSE connection must not crash the fanout
+					logger.warn('Progress callback error', {
+						op: 'progress_callback',
+						error: cb_err instanceof Error ? cb_err.message : String(cb_err),
+					});
+				}
+			}
 		}
 	}, PROGRESS_INTERVAL_MS);
 
 	try {
-		// Race: early exit (LLM stragglers only) vs global deadline vs all done
 		let timer_id: ReturnType<typeof setTimeout>;
 		const deadline = new Promise<void>((resolve) => { timer_id = setTimeout(resolve, GLOBAL_TIMEOUT_MS); });
-		await Promise.race([Promise.all(tracked), early_exit, deadline]);
+		await Promise.race([Promise.all(tracked), deadline]);
 		clearTimeout(timer_id!);
 	} finally {
 		clearInterval(progress_interval);
@@ -206,15 +195,14 @@ const execute_tasks = async (
 
 	// Mark still-pending providers so they don't silently disappear from the response
 	if (completed_count < total_count) {
+		const deadline_duration = Date.now() - start_time;
 		const pending = tasks.filter((t) => !completed_set.has(t.name));
 		for (const t of pending) {
-			const is_early = LLM_PROXY_PROVIDERS.has(t.name);
-			const error_msg = is_early ? 'Skipped (early exit — LLM straggler)' : 'Timed out (global deadline)';
-			failed.push({ provider: t.name, error: error_msg, duration_ms: Date.now() - start_time });
-			logger.warn(is_early ? 'Provider skipped (early exit)' : 'Provider timed out', {
-				op: is_early ? 'provider_skipped' : 'provider_timeout',
+			failed.push({ provider: t.name, error: 'Timed out (global deadline)', duration_ms: deadline_duration });
+			logger.warn('Provider timed out', {
+				op: 'provider_timeout',
 				provider: t.name,
-				duration_ms: Date.now() - start_time,
+				duration_ms: deadline_duration,
 			});
 		}
 	}
@@ -240,6 +228,7 @@ export const run_answer_fanout = async (
 	ai_search_ref: UnifiedAISearchProvider,
 	web_search_ref: UnifiedWebSearchProvider | undefined,
 	query: string,
+	on_progress?: ProgressCallback,
 ): Promise<AnswerResult | null> => {
 	const tasks = build_tasks(ai_search_ref, web_search_ref, query);
 	if (tasks.length === 0) {
@@ -257,7 +246,7 @@ export const run_answer_fanout = async (
 		providers_count: tasks.length,
 	});
 
-	const { answers, failed } = await execute_tasks(tasks);
+	const { answers, failed } = await execute_tasks(tasks, on_progress);
 
 	const result: AnswerResult = {
 		query,
