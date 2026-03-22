@@ -97,10 +97,16 @@ const inject_sse_keepalive = (original: Response): Response => {
 		return flat;
 	};
 
-	// Find the first \n\n boundary in buf (end of a complete SSE event)
+	// Find the first SSE event boundary: \n\n, \r\n\r\n, or \r\r per WHATWG spec
 	const find_event_boundary = (buf: Uint8Array): number => {
 		for (let i = 0; i < buf.length - 1; i++) {
+			// \n\n
 			if (buf[i] === 0x0a && buf[i + 1] === 0x0a) return i + 2;
+			// \r\r (with optional \n after each \r for \r\n\r\n)
+			if (buf[i] === 0x0d) {
+				if (buf[i + 1] === 0x0d) return i + 2; // \r\r
+				if (buf[i + 1] === 0x0a && i + 3 < buf.length && buf[i + 2] === 0x0d && buf[i + 3] === 0x0a) return i + 4; // \r\n\r\n
+			}
 		}
 		return -1;
 	};
