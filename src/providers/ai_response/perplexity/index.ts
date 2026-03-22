@@ -136,11 +136,11 @@ export class PerplexityProvider implements SearchProvider {
 			return {
 				answer,
 				context: {
-					sources: citations.map((citation: string) => ({
-						title: 'Citation',
-						url: citation,
-						content: 'Source citation',
-					})),
+					sources: citations.map((citation: string) => {
+						let title = 'Citation';
+						try { title = new URL(citation).hostname.replace(/^www\./, ''); } catch { /* keep default */ }
+						return { title, url: citation, content: `Source: ${citation}` };
+					}),
 					follow_up_questions: [],
 				},
 				metadata: {
