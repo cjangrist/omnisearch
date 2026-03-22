@@ -87,11 +87,6 @@ export const config = {
 			base_url: 'https://api.tavily.com',
 			timeout: 180000,
 		},
-		you_search: {
-			api_key: undefined as string | undefined,
-			base_url: 'https://api.you.com/v1/agents/runs',
-			timeout: 180000,
-		},
 		chatgpt: {
 			api_key: '' as string,
 			base_url: '',
@@ -284,7 +279,6 @@ export const initialize_config = (env: Env) => {
 	config.ai_response.exa_answer.api_key = env.EXA_API_KEY;
 	config.ai_response.brave_answer.api_key = env.BRAVE_ANSWER_API_KEY;
 	config.ai_response.tavily_answer.api_key = env.TAVILY_API_KEY;
-	config.ai_response.you_search.api_key = env.YOU_API_KEY;
 	// LLM search providers (ChatGPT/Claude/Gemini via OpenAI-compatible endpoint)
 	if (env.LLM_SEARCH_BASE_URL) {
 		config.ai_response.chatgpt.base_url = env.LLM_SEARCH_BASE_URL;

@@ -15,8 +15,6 @@ import { KagiFastGPTProvider, registration as kagi_fastgpt_reg } from '../ai_res
 import { registration as llm_reg } from '../ai_response/llm_search/index.js';
 import { PerplexityProvider, registration as perplexity_reg } from '../ai_response/perplexity/index.js';
 import { TavilyAnswerProvider, registration as tavily_answer_reg } from '../ai_response/tavily_answer/index.js';
-import { YouSearchProvider, registration as you_search_reg } from '../ai_response/you_search/index.js';
-
 // ─── ADD ONE LINE HERE TO REGISTER A NEW AI PROVIDER ────────────────
 const PROVIDERS = [
 	{ name: 'perplexity', ...perplexity_reg, factory: () => new PerplexityProvider() },
@@ -24,7 +22,6 @@ const PROVIDERS = [
 	{ name: 'exa_answer', ...exa_answer_reg, factory: () => new ExaAnswerProvider() },
 	{ name: 'brave_answer', ...brave_answer_reg, factory: () => new BraveAnswerProvider() },
 	{ name: 'tavily_answer', ...tavily_answer_reg, factory: () => new TavilyAnswerProvider() },
-	{ name: 'you_search', ...you_search_reg, factory: () => new YouSearchProvider() },
 	...llm_reg,
 ] as const;
 // ─────────────────────────────────────────────────────────────────────
