@@ -3,6 +3,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { create_error_response } from '../common/utils.js';
+import { run_with_request_id } from '../common/logger.js';
 import type {
 	UnifiedWebSearchProvider,
 } from '../providers/unified/web_search.js';
@@ -93,7 +94,7 @@ class ToolRegistry {
 					})),
 				},
 			},
-			async ({ query, timeout_ms, include_snippets }) => {
+			async ({ query, timeout_ms, include_snippets }) => run_with_request_id(crypto.randomUUID(), async () => {
 				try {
 					const result = await run_web_search_fanout(web_ref, query, {
 						timeout_ms,
@@ -102,7 +103,7 @@ class ToolRegistry {
 				} catch (error) {
 					return this.format_error(error as Error);
 				}
-			},
+			}),
 		);
 	}
 
@@ -134,7 +135,7 @@ IMPORTANT: This tool fans out to 9 providers and can take up to 2 minutes to com
 					})),
 				},
 			},
-			async ({ query }) => {
+			async ({ query }) => run_with_request_id(crypto.randomUUID(), async () => {
 				try {
 					const answer_result = await run_answer_fanout(ai_ref, web_ref, query);
 					if (!answer_result) {
@@ -158,7 +159,7 @@ IMPORTANT: This tool fans out to 9 providers and can take up to 2 minutes to com
 				} catch (error) {
 					return this.format_error(error as Error);
 				}
-			},
+			}),
 		);
 	}
 
@@ -183,7 +184,7 @@ You should NEVER need to fetch a URL yourself or worry about being blocked. Just
 					metadata: z.record(z.string(), z.unknown()).optional(),
 				},
 			},
-			async ({ url }) => {
+			async ({ url }) => run_with_request_id(crypto.randomUUID(), async () => {
 				try {
 					const result = await run_fetch_race(fetch_ref, url);
 					const response = {
@@ -201,7 +202,7 @@ You should NEVER need to fetch a URL yourself or worry about being blocked. Just
 				} catch (error) {
 					return this.format_error(error as Error);
 				}
-			},
+			}),
 		);
 	}
 

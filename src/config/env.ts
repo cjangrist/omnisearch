@@ -277,6 +277,16 @@ export const initialize_config = (env: Env) => {
 	config.ai_response.exa_answer.api_key = env.EXA_API_KEY;
 	config.ai_response.brave_answer.api_key = env.BRAVE_ANSWER_API_KEY;
 	config.ai_response.tavily_answer.api_key = env.TAVILY_API_KEY;
+	// Reset conditional fields to defaults before reapplying — prevents stale values
+	// from surviving when env vars are removed between deploys.
+	config.ai_response.chatgpt.base_url = '';
+	config.ai_response.chatgpt.api_key = '';
+	config.ai_response.claude.base_url = '';
+	config.ai_response.claude.api_key = '';
+	config.ai_response.gemini.base_url = '';
+	config.ai_response.gemini.api_key = '';
+	config.fetch.brightdata.zone = 'unblocker';
+
 	// LLM search providers (ChatGPT/Claude/Gemini via OpenAI-compatible endpoint)
 	// Require BOTH base_url AND api_key — without a key, requests fail auth every time.
 	if (env.LLM_SEARCH_BASE_URL && env.LLM_SEARCH_API_KEY) {
