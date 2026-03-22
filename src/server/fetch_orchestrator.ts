@@ -31,10 +31,13 @@ const get_fetch_cached = async (url: string): Promise<FetchRaceResult | undefine
 	}
 };
 
-const set_fetch_cached = (url: string, result: FetchRaceResult): void => {
+const set_fetch_cached = async (url: string, result: FetchRaceResult): Promise<void> => {
 	if (!kv_cache) return;
-	kv_cache.put(KV_FETCH_PREFIX + url, JSON.stringify(result), { expirationTtl: KV_FETCH_TTL_SECONDS })
-		.catch((err) => logger.warn('KV fetch cache write failed', { op: 'kv_write_error', error: err instanceof Error ? err.message : String(err) }));
+	try {
+		await kv_cache.put(KV_FETCH_PREFIX + url, JSON.stringify(result), { expirationTtl: KV_FETCH_TTL_SECONDS });
+	} catch (err) {
+		logger.warn('KV fetch cache write failed', { op: 'kv_write_error', error: err instanceof Error ? err.message : String(err) });
+	}
 };
 
 // ── Config (runtime mirror of config.yaml) ───────────────────────
@@ -316,9 +319,9 @@ export const run_fetch_race = async (
 	logger.info('Waterfall start', { op: 'waterfall_start', url: url.slice(0, 200) });
 
 	// Helper: build result and cache it for future requests
-	const build_and_cache = (provider: string, result: FetchResult): FetchRaceResult => {
+	const build_and_cache = async (provider: string, result: FetchResult): Promise<FetchRaceResult> => {
 		const race_result = build_result(start_time, provider, result, attempted, failed);
-		set_fetch_cached(url, race_result); // fire-and-forget
+		await set_fetch_cached(url, race_result);
 		return race_result;
 	};
 
@@ -336,7 +339,7 @@ export const run_fetch_race = async (
 			});
 			const breaker_result = await run_solo(ctx, breaker_config.provider);
 			if (breaker_result) {
-				return build_and_cache(breaker_config.provider, breaker_result);
+				return await build_and_cache(breaker_config.provider, breaker_result);
 			}
 			logger.warn('Breaker failed, continuing', { op: 'breaker_fallthrough', breaker: breaker_name });
 		}
@@ -352,7 +355,7 @@ export const run_fetch_race = async (
 				steps_tried: attempted.length,
 				total_ms: Date.now() - start_time,
 			});
-			return build_and_cache(step_result.provider, step_result.result);
+			return await build_and_cache(step_result.provider, step_result.result);
 		}
 	}
 

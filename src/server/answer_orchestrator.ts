@@ -276,10 +276,13 @@ export const run_answer_fanout = async (
 		providers_failed: result.providers_failed.length,
 	});
 
-	// Cache successful results (fire-and-forget) — only cache if at least one provider succeeded
+	// Await KV write — prevents REST path from killing the promise after response is sent
 	if (kv_cache && result.answers.length > 0) {
-		kv_cache.put(KV_ANSWER_PREFIX + query, JSON.stringify(result), { expirationTtl: KV_ANSWER_TTL_SECONDS })
-			.catch((err) => logger.warn('KV answer cache write failed', { op: 'kv_write_error', error: err instanceof Error ? err.message : String(err) }));
+		try {
+			await kv_cache.put(KV_ANSWER_PREFIX + query, JSON.stringify(result), { expirationTtl: KV_ANSWER_TTL_SECONDS });
+		} catch (err) {
+			logger.warn('KV answer cache write failed', { op: 'kv_write_error', error: err instanceof Error ? err.message : String(err) });
+		}
 	}
 
 	return result;
