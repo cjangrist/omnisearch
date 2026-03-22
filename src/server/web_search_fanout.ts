@@ -77,6 +77,13 @@ const dispatch_to_providers = async (
 		timeout_ms: timeout_ms ?? 'none',
 	});
 
+	// Create a deadline controller that we abort when timeout_ms fires,
+	// so in-flight provider HTTP requests are cancelled instead of running to completion.
+	const deadline_controller = timeout_ms ? new AbortController() : undefined;
+	const combined_signal = deadline_controller
+		? (signal ? AbortSignal.any([signal, deadline_controller.signal]) : deadline_controller.signal)
+		: signal;
+
 	const provider_promises = active.map(async (p) => {
 		const t0 = Date.now();
 		const provider = loggers.search(p.name);
@@ -85,7 +92,7 @@ const dispatch_to_providers = async (
 			provider.debug('Starting search', { op: 'provider_search_start' });
 
 			const results = await retry_with_backoff(
-				() => web_provider.search({ query, provider: p.name as WebSearchProvider, limit: per_provider_limit, signal }),
+				() => web_provider.search({ query, provider: p.name as WebSearchProvider, limit: per_provider_limit, signal: combined_signal }),
 				1,
 			);
 
@@ -119,8 +126,14 @@ const dispatch_to_providers = async (
 		// Race all providers against a deadline — return partial results when time's up
 		let timer_id: ReturnType<typeof setTimeout>;
 		const deadline = new Promise<void>((resolve) => { timer_id = setTimeout(resolve, timeout_ms); });
-		await Promise.race([Promise.allSettled(provider_promises), deadline]);
+		const winner = await Promise.race([
+			Promise.allSettled(provider_promises).then(() => 'done' as const),
+			deadline.then(() => 'timeout' as const),
+		]);
 		clearTimeout(timer_id!);
+		if (winner === 'timeout' && deadline_controller) {
+			deadline_controller.abort();
+		}
 
 		const pending = active.filter((p) => !providers_succeeded.some((s) => s.provider === p.name) &&
 			!providers_failed.some((f) => f.provider === p.name));
