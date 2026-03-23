@@ -11,6 +11,7 @@ import { register_tools, active_providers } from './server/tools.js';
 import { setup_handlers } from './server/handlers.js';
 import { handle_rest_search } from './server/rest_search.js';
 import { handle_rest_fetch } from './server/rest_fetch.js';
+import { handle_rest_researcher } from './server/rest_researcher.js';
 import { loggers, run_with_request_id } from './common/logger.js';
 import type { Env } from './types/env.js';
 
@@ -309,6 +310,28 @@ async function handle_request(request: Request, env: Env, ctx: ExecutionContext,
 				return add_cors_headers(Response.json({ error: 'Internal server error' }, { status: 500 }));
 			}
 			return add_cors_headers(fetch_response);
+		}
+
+		// GPT-Researcher compatible endpoint (GET or POST)
+		if (url.pathname === '/researcher') {
+			logger.info('Handling researcher request', { op: 'rest_researcher', request_id });
+			try {
+				await ensure_rest_initialized(env);
+			} catch (err) {
+				logger.error('Provider initialization failed', {
+					op: 'provider_init', request_id,
+					error: err instanceof Error ? err.message : String(err),
+				});
+				return add_cors_headers(Response.json({ error: 'Internal server error' }, { status: 500 }));
+			}
+			let response: Response;
+			try {
+				response = await handle_rest_researcher(request);
+			} catch (err) {
+				logger.error('Researcher handler error', { op: 'rest_researcher', request_id, error: err instanceof Error ? err.message : String(err) });
+				return add_cors_headers(Response.json({ error: 'Internal server error' }, { status: 500 }));
+			}
+			return add_cors_headers(response);
 		}
 
 		// Health check
