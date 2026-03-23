@@ -5,9 +5,8 @@
 
 import { loggers } from '../common/logger.js';
 import { authenticate_rest_request, sanitize_for_log } from '../common/utils.js';
-import { get_web_search_provider, get_fetch_provider } from './tools.js';
+import { get_web_search_provider } from './tools.js';
 import { run_web_search_fanout } from './web_search_fanout.js';
-import { run_fetch_race } from './fetch_orchestrator.js';
 import { OPENWEBUI_API_KEY, OMNISEARCH_API_KEY } from '../config/env.js';
 
 const logger = loggers.rest();
@@ -58,19 +57,21 @@ export async function handle_rest_researcher(
 	});
 
 	const web_provider = get_web_search_provider();
-	const fetch_provider = get_fetch_provider();
 
 	if (!web_provider) {
 		return Response.json({ error: 'No search providers configured' }, { status: 503 });
 	}
 
-	// Step 1: Search for URLs
-	let search_urls: string[];
+	let output: Array<{ href: string; body: string }>;
 	try {
 		const fanout = await run_web_search_fanout(web_provider, query);
-		search_urls = fanout.web_results
+		output = fanout.web_results
 			.slice(0, DEFAULT_MAX_RESULTS)
-			.map((r) => r.url);
+			.map((r) => ({
+				href: r.url,
+				body: r.snippets?.join('\n') ?? '',
+			}))
+			.filter((r) => r.body.length > 0);
 	} catch (err) {
 		logger.error('Researcher search failed', {
 			op: 'researcher_search',
@@ -79,38 +80,11 @@ export async function handle_rest_researcher(
 		return Response.json({ error: 'Search failed' }, { status: 502 });
 	}
 
-	if (search_urls.length === 0) {
-		const duration = Date.now() - start_time;
-		logger.response(request.method, '/researcher', 200, duration, { result_count: 0 });
-		return Response.json([]);
-	}
-
-	// Step 2: Fetch all URLs in parallel
-	const results = await Promise.allSettled(
-		search_urls.map(async (page_url): Promise<{ href: string; body: string }> => {
-			if (!fetch_provider) {
-				return { href: page_url, body: '' };
-			}
-			try {
-				const result = await run_fetch_race(fetch_provider, page_url);
-				return { href: page_url, body: result.result.content };
-			} catch {
-				return { href: page_url, body: '' };
-			}
-		}),
-	);
-
-	const output = results
-		.filter((r): r is PromiseFulfilledResult<{ href: string; body: string }> => r.status === 'fulfilled')
-		.map((r) => r.value)
-		.filter((r) => r.body.length > 0);
-
 	const duration = Date.now() - start_time;
 	logger.info('Researcher complete', {
 		op: 'researcher_complete',
 		query: sanitize_for_log(query),
-		urls_searched: search_urls.length,
-		urls_fetched: output.length,
+		result_count: output.length,
 		duration_ms: duration,
 	});
 	logger.response(request.method, '/researcher', 200, duration, { result_count: output.length });
