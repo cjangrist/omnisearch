@@ -87,23 +87,23 @@ export async function handle_rest_researcher(
 
 	// Step 2: Fetch all URLs in parallel
 	const results = await Promise.allSettled(
-		search_urls.map(async (page_url): Promise<{ url: string; raw_content: string }> => {
+		search_urls.map(async (page_url): Promise<{ href: string; body: string }> => {
 			if (!fetch_provider) {
-				return { url: page_url, raw_content: '' };
+				return { href: page_url, body: '' };
 			}
 			try {
 				const result = await run_fetch_race(fetch_provider, page_url);
-				return { url: page_url, raw_content: result.result.content };
+				return { href: page_url, body: result.result.content };
 			} catch {
-				return { url: page_url, raw_content: '' };
+				return { href: page_url, body: '' };
 			}
 		}),
 	);
 
 	const output = results
-		.filter((r): r is PromiseFulfilledResult<{ url: string; raw_content: string }> => r.status === 'fulfilled')
+		.filter((r): r is PromiseFulfilledResult<{ href: string; body: string }> => r.status === 'fulfilled')
 		.map((r) => r.value)
-		.filter((r) => r.raw_content.length > 0);
+		.filter((r) => r.body.length > 0);
 
 	const duration = Date.now() - start_time;
 	logger.info('Researcher complete', {
