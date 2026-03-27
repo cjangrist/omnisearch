@@ -7,6 +7,7 @@ import { rank_and_merge, truncate_web_results, type RankedWebResult } from '../c
 import { retry_with_backoff, hash_key } from '../common/utils.js';
 import { get_active_search_providers, type WebSearchProvider } from '../providers/unified/web_search.js';
 import { kv_cache } from '../config/env.js';
+import { TraceContext, get_active_trace, run_with_trace } from '../common/r2_trace.js';
 
 const logger = loggers.search();
 
@@ -88,6 +89,9 @@ const dispatch_to_providers = async (
 	const provider_promises = active.map(async (p) => {
 		const t0 = Date.now();
 		const provider = loggers.search(p.name);
+		const trace = get_active_trace();
+
+		trace?.record_provider_start(p.name, { query, limit: per_provider_limit });
 
 		try {
 			provider.debug('Starting search', { op: 'provider_search_start' });
@@ -100,6 +104,7 @@ const dispatch_to_providers = async (
 			results_by_provider.set(p.name, results);
 			const duration_ms = Date.now() - t0;
 			providers_succeeded.push({ provider: p.name, duration_ms });
+			trace?.record_provider_complete(p.name, results, duration_ms);
 
 			provider.info('Search completed', {
 				op: 'provider_search_complete',
@@ -114,6 +119,7 @@ const dispatch_to_providers = async (
 				error: error_msg,
 				duration_ms,
 			});
+			trace?.record_provider_error(p.name, error_msg, duration_ms);
 
 			provider.warn('Search failed', {
 				op: 'provider_search_failed',
@@ -172,71 +178,106 @@ export const run_web_search_fanout = async (
 	query: string,
 	options?: { skip_quality_filter?: boolean; limit?: number; timeout_ms?: number; signal?: AbortSignal },
 ): Promise<FanoutResult> => {
-	// Return cached result if available (deduplicates gemini-grounded web search inside answer fanout)
-	const cache_key = await make_cache_key(query, options);
-	const cached = await get_cached(cache_key);
-	if (cached) {
-		logger.debug('Returning cached fanout result', { op: 'fanout_cache_hit', query: query.slice(0, 100) });
-		return cached;
-	}
+	const trace = new TraceContext(crypto.randomUUID(), 'web_search');
+	const parent = get_active_trace();
+	if (parent) trace.parent_trace_id = parent.trace_id;
+	trace.set_strategy('parallel_fanout');
+	trace.request_environment = { query, skip_quality_filter: options?.skip_quality_filter, limit: options?.limit, timeout_ms: options?.timeout_ms };
 
-	const per_provider_limit = options?.limit ?? DEFAULT_TOP_N;
-	const active = get_active_search_providers();
+	return run_with_trace(trace, async () => {
+		// Return cached result if available (deduplicates gemini-grounded web search inside answer fanout)
+		const cache_key = await make_cache_key(query, options);
+		const cached = await get_cached(cache_key);
+		if (cached) {
+			logger.debug('Returning cached fanout result', { op: 'fanout_cache_hit', query: query.slice(0, 100) });
+			trace.cache_hit = true;
+			trace.record_decision('cache_hit', { query: query.slice(0, 100) });
+			trace.flush_background(cached);
+			return cached;
+		}
 
-	if (active.length === 0) {
-		logger.warn('No search providers available', { op: 'fanout_check' });
-		return { total_duration_ms: 0, providers_succeeded: [], providers_failed: [], web_results: [] };
-	}
+		const per_provider_limit = options?.limit ?? DEFAULT_TOP_N;
+		const active = get_active_search_providers();
 
-	logger.info('Starting web search fanout', {
-		op: 'web_fanout_start',
-		query: query.slice(0, 100),
-		provider_count: active.length,
-		providers: active.map((p) => p.name),
-		skip_quality_filter: options?.skip_quality_filter ?? false,
+		if (active.length === 0) {
+			logger.warn('No search providers available', { op: 'fanout_check' });
+			const empty_result: FanoutResult = { total_duration_ms: 0, providers_succeeded: [], providers_failed: [], web_results: [] };
+			trace.record_decision('no_providers_available', {});
+			trace.flush_background(empty_result);
+			return empty_result;
+		}
+
+		trace.set_active_providers(active.map((p) => p.name));
+		trace.record_decision('dispatch_start', {
+			provider_count: active.length,
+			providers: active.map((p) => p.name),
+			per_provider_limit,
+			timeout_ms: options?.timeout_ms ?? null,
+		});
+
+		logger.info('Starting web search fanout', {
+			op: 'web_fanout_start',
+			query: query.slice(0, 100),
+			provider_count: active.length,
+			providers: active.map((p) => p.name),
+			skip_quality_filter: options?.skip_quality_filter ?? false,
+		});
+
+		const fanout_start = Date.now();
+		const { results_by_provider, providers_succeeded, providers_failed } =
+			await dispatch_to_providers(web_provider, query, active, per_provider_limit, options?.timeout_ms, options?.signal);
+
+		const dispatch_duration = Date.now() - fanout_start;
+
+		trace.record_decision('dispatch_complete', {
+			succeeded: providers_succeeded.length,
+			failed: providers_failed.length,
+			dispatch_duration_ms: dispatch_duration,
+		});
+
+		logger.debug('Ranking and merging results', {
+			op: 'ranking_start',
+			provider_results: results_by_provider.size,
+			results_by_provider: Object.fromEntries(
+				Array.from(results_by_provider.entries()).map(([k, v]) => [k, v.length]),
+			),
+		});
+
+		const web_results = rank_and_merge(results_by_provider, query, options?.skip_quality_filter);
+
+		const total_duration = Date.now() - fanout_start;
+
+		trace.record_decision('ranking_complete', {
+			total_results: web_results.length,
+			total_duration_ms: total_duration,
+		});
+
+		logger.info('Web search fanout complete', {
+			op: 'web_fanout_complete',
+			query: query.slice(0, 100),
+			dispatch_duration_ms: dispatch_duration,
+			total_duration_ms: total_duration,
+			providers_succeeded: providers_succeeded.length,
+			providers_failed: providers_failed.length,
+			failed_providers: providers_failed.map((f) => f.provider),
+			final_result_count: web_results.length,
+		});
+
+		const result: FanoutResult = {
+			total_duration_ms: total_duration,
+			providers_succeeded,
+			providers_failed,
+			web_results,
+		};
+
+		// Only cache successful results — don't pin transient failures for 24h
+		if (providers_succeeded.length > 0) {
+			await set_cached(cache_key, result);
+		}
+
+		trace.flush_background(result);
+		return result;
 	});
-
-	const fanout_start = Date.now();
-	const { results_by_provider, providers_succeeded, providers_failed } =
-		await dispatch_to_providers(web_provider, query, active, per_provider_limit, options?.timeout_ms, options?.signal);
-
-	const dispatch_duration = Date.now() - fanout_start;
-
-	logger.debug('Ranking and merging results', {
-		op: 'ranking_start',
-		provider_results: results_by_provider.size,
-		results_by_provider: Object.fromEntries(
-			Array.from(results_by_provider.entries()).map(([k, v]) => [k, v.length]),
-		),
-	});
-
-	const web_results = rank_and_merge(results_by_provider, query, options?.skip_quality_filter);
-
-	const total_duration = Date.now() - fanout_start;
-
-	logger.info('Web search fanout complete', {
-		op: 'web_fanout_complete',
-		query: query.slice(0, 100),
-		dispatch_duration_ms: dispatch_duration,
-		total_duration_ms: total_duration,
-		providers_succeeded: providers_succeeded.length,
-		providers_failed: providers_failed.length,
-		failed_providers: providers_failed.map((f) => f.provider),
-		final_result_count: web_results.length,
-	});
-
-	const result: FanoutResult = {
-		total_duration_ms: total_duration,
-		providers_succeeded,
-		providers_failed,
-		web_results,
-	};
-
-	// Only cache successful results — don't pin transient failures for 24h
-	if (providers_succeeded.length > 0) {
-		await set_cached(cache_key, result);
-	}
-	return result;
 };
 
 export { truncate_web_results };

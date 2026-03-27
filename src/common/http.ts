@@ -1,6 +1,7 @@
 import { ErrorType, ProviderError } from './types.js';
 import { loggers } from './logger.js';
 import { handle_rate_limit } from './utils.js';
+import { get_active_trace, extract_headers_from_init, extract_response_headers, parse_request_body } from './r2_trace.js';
 
 const logger = loggers.http();
 
@@ -43,6 +44,27 @@ const http_core = async (
 	options: HttpOptions = {},
 ): Promise<{ raw: string; status: number }> => {
 	const request_start = Date.now();
+	const trace = get_active_trace();
+	const trace_req = trace ? {
+		method: (options.method ?? 'GET') as string,
+		url,
+		request_headers: extract_headers_from_init(options.headers),
+		request_body: parse_request_body(options.body as BodyInit | null | undefined),
+	} : undefined;
+	const trace_record = (status: number, resp_headers: Record<string, string>, resp_body: unknown, size: number, error?: string) => {
+		if (!trace || !trace_req) return;
+		trace.record_http_call(provider, {
+			timestamp: new Date(request_start).toISOString(),
+			...trace_req,
+			response_status: status,
+			response_headers: resp_headers,
+			response_body: resp_body,
+			response_size_bytes: size,
+			duration_ms: Date.now() - request_start,
+			...(error ? { error } : {}),
+		});
+	};
+
 	logger.debug('HTTP request', {
 		op: 'http_request',
 		provider,
@@ -50,12 +72,19 @@ const http_core = async (
 		url: sanitize_url(url),
 	});
 
-	const res = await fetch(url, options);
+	let res: Response;
+	try {
+		res = await fetch(url, options);
+	} catch (err) {
+		trace_record(0, {}, null, 0, err instanceof Error ? err.message : String(err));
+		throw err;
+	}
 	const content_length = parseInt(res.headers.get('content-length') ?? '0', 10) || 0;
 
 	// Fast path: reject if content-length header exceeds limit
 	if (content_length > MAX_RESPONSE_BYTES) {
 		res.body?.cancel();
+		trace_record(res.status, extract_response_headers(res.headers), `[too large: ${content_length} bytes]`, content_length, `Response too large (${content_length} bytes)`);
 		throw new ProviderError(ErrorType.API_ERROR, `Response too large (${content_length} bytes)`, provider);
 	}
 
@@ -73,6 +102,7 @@ const http_core = async (
 			total_bytes += value.byteLength;
 			if (total_bytes > MAX_RESPONSE_BYTES) {
 				reader.cancel();
+				trace_record(res.status, extract_response_headers(res.headers), `[too large: >${MAX_RESPONSE_BYTES} bytes, chunked]`, total_bytes, `Response too large (>${MAX_RESPONSE_BYTES} bytes, chunked)`);
 				throw new ProviderError(ErrorType.API_ERROR, `Response too large (>${MAX_RESPONSE_BYTES} bytes, chunked)`, provider);
 			}
 			chunks.push(decoder.decode(value, { stream: true }));
@@ -82,6 +112,9 @@ const http_core = async (
 	} else {
 		raw = '';
 	}
+
+	// Record full HTTP call in R2 trace (unredacted, before any status-based throws)
+	trace_record(res.status, extract_response_headers(res.headers), tryParseJson(raw) ?? raw, total_bytes);
 
 	const okOrExpected =
 		res.ok ||

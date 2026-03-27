@@ -3,6 +3,7 @@
 
 import type { Env } from '../types/env.js';
 import { loggers } from '../common/logger.js';
+import { set_trace_r2_bucket } from '../common/r2_trace.js';
 
 const logger = loggers.config();
 
@@ -259,6 +260,7 @@ export const initialize_config = (env: Env) => {
 	OPENWEBUI_API_KEY = env.OPENWEBUI_API_KEY;
 	OMNISEARCH_API_KEY = env.OMNISEARCH_API_KEY;
 	kv_cache = env.CACHE;
+	set_trace_r2_bucket(env.TRACE_BUCKET);
 
 	// Search providers
 	config.search.tavily.api_key = env.TAVILY_API_KEY;

@@ -14,6 +14,10 @@ class_name = "OmnisearchMCP"
 binding = "CACHE"
 id = "d8b1130bed234c308a15316a5dfc15a8"
 
+[[r2_buckets]]
+binding = "TRACE_BUCKET"
+bucket_name = "omnisearch"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["OmnisearchMCP"]
