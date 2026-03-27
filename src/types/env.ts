@@ -63,6 +63,9 @@ export interface Env {
 	// KV namespace for caching search and fetch results (24h TTL)
 	CACHE: KVNamespace;
 
+	// R2 bucket for full request/response tracing
+	TRACE_BUCKET: R2Bucket;
+
 	// Durable Object namespace for the stateful MCP agent
 	OmnisearchMCP: DurableObjectNamespace;
 }

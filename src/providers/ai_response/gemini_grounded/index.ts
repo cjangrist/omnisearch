@@ -7,6 +7,7 @@ import { http_json } from '../../../common/http.js';
 import type { SearchResult } from '../../../common/types.js';
 import { handle_provider_error, make_signal } from '../../../common/utils.js';
 import { config } from '../../../config/env.js';
+import { get_active_trace, extract_response_headers } from '../../../common/r2_trace.js';
 
 const PROVIDER_NAME = 'gemini-grounded';
 const MAX_URLS = 20; // Gemini API hard limit
@@ -76,20 +77,39 @@ export async function gemini_grounded_search(
 	try {
 		// Use raw fetch to inspect actual JSON field names from Gemini API
 		const api_url = `${cfg.base_url}/models/${cfg.model}:generateContent`;
+		const request_body = {
+			contents: [{ parts: [{ text: prompt }] }],
+			tools: [{ url_context: {} }],
+		};
+		const fetch_start = Date.now();
 		const raw_res = await fetch(api_url, {
 			method: 'POST',
 			headers: {
 				'x-goog-api-key': cfg.api_key,
 				'Content-Type': 'application/json',
 			},
-			body: JSON.stringify({
-				contents: [{ parts: [{ text: prompt }] }],
-				tools: [{ url_context: {} }],
-			}),
+			body: JSON.stringify(request_body),
 			signal: make_signal(cfg.timeout, external_signal),
 		});
 		const raw_json = await raw_res.text();
 		const response = JSON.parse(raw_json) as Record<string, unknown>;
+
+		// Record HTTP call in R2 trace (this provider uses raw fetch, not http_json)
+		const trace = get_active_trace();
+		if (trace) {
+			trace.record_http_call(PROVIDER_NAME, {
+				timestamp: new Date(fetch_start).toISOString(),
+				method: 'POST',
+				url: api_url,
+				request_headers: { 'x-goog-api-key': cfg.api_key, 'Content-Type': 'application/json' },
+				request_body,
+				response_status: raw_res.status,
+				response_headers: extract_response_headers(raw_res.headers),
+				response_body: response,
+				response_size_bytes: raw_json.length,
+				duration_ms: Date.now() - fetch_start,
+			});
+		}
 
 		// Extract candidate — inspect raw field names
 		const candidates = response.candidates as Array<Record<string, unknown>> | undefined;

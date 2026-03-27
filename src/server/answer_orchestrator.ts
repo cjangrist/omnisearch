@@ -9,6 +9,7 @@ import { get_active_ai_providers, type AISearchProvider, type UnifiedAISearchPro
 import type { UnifiedWebSearchProvider } from '../providers/unified/web_search.js';
 import { gemini_grounded_search } from '../providers/ai_response/gemini_grounded/index.js';
 import { run_web_search_fanout } from './web_search_fanout.js';
+import { TraceContext, get_active_trace, run_with_trace } from '../common/r2_trace.js';
 
 const logger = loggers.aiResponse();
 
@@ -76,13 +77,18 @@ const build_tasks = (
 ): ProviderTask[] => {
 	// No retry_with_backoff — the multi-provider fanout IS the redundancy strategy.
 	// Retrying individual providers doubles worst-case latency (2x timeout + backoff).
-	const tasks: ProviderTask[] = get_active_ai_providers().map((ap) => ({
-		name: ap.name,
-		started_at: Date.now(),
-		promise: ai_search_ref.search({ query, provider: ap.name as AISearchProvider, signal }),
-	}));
+	const trace = get_active_trace();
+	const tasks: ProviderTask[] = get_active_ai_providers().map((ap) => {
+		trace?.record_provider_start(ap.name, { query });
+		return {
+			name: ap.name,
+			started_at: Date.now(),
+			promise: ai_search_ref.search({ query, provider: ap.name as AISearchProvider, signal }),
+		};
+	});
 
 	if (web_search_ref && config.ai_response.gemini_grounded.api_key) {
+		trace?.record_provider_start('gemini-grounded', { query, strategy: 'web_search_fanout + gemini_url_context' });
 		tasks.push({
 			name: 'gemini-grounded',
 			started_at: Date.now(),
@@ -127,6 +133,7 @@ const execute_tasks = async (
 
 	let is_done = false;
 
+	const trace = get_active_trace();
 	const tracked = tasks.map((task) =>
 		task.promise.then(
 			(value) => {
@@ -136,6 +143,7 @@ const execute_tasks = async (
 				completed_set.add(task.name);
 				const entry = { ...build_answer_entry(task.name, value), duration_ms };
 				answers.push(entry);
+				trace?.record_provider_complete(task.name, value, duration_ms);
 
 				logger.info('Provider completed', {
 					op: 'provider_done',
@@ -153,6 +161,7 @@ const execute_tasks = async (
 				completed_set.add(task.name);
 				const error_msg = reason instanceof Error ? reason.message : String(reason);
 				failed.push({ provider: task.name, error: error_msg, duration_ms });
+				trace?.record_provider_error(task.name, error_msg, duration_ms);
 
 				logger.warn('Provider failed', {
 					op: 'provider_failed',
@@ -231,64 +240,88 @@ export const run_answer_fanout = async (
 	web_search_ref: UnifiedWebSearchProvider | undefined,
 	query: string,
 ): Promise<AnswerResult | null> => {
-	// Check KV cache first
-	if (kv_cache) {
-		try {
-			const answer_cache_key = await hash_key('answer:', query);
-			const cached = await kv_cache.get(answer_cache_key, 'json') as AnswerResult | null;
-			if (cached) {
-				logger.debug('Returning cached answer result', { op: 'answer_cache_hit', query: query.slice(0, 100) });
-				return cached;
-			}
-		} catch { /* cache miss or read error — proceed normally */ }
-	}
+	const trace = new TraceContext(crypto.randomUUID(), 'answer');
+	trace.set_strategy('parallel_fanout');
+	trace.request_environment = { query };
 
-	const abort_controller = new AbortController();
-	const tasks = build_tasks(ai_search_ref, web_search_ref, query, abort_controller.signal);
-	if (tasks.length === 0) {
-		logger.warn('No AI providers available for answer', {
-			op: 'answer_fanout',
-			query: query.slice(0, 100),
-		});
-		return null;
-	}
-
-	const start_time = Date.now();
-	logger.info('Starting answer fanout', {
-		op: 'answer_fanout_start',
-		query: query.slice(0, 100),
-		providers_count: tasks.length,
-	});
-
-	const { answers, failed } = await execute_tasks(tasks, abort_controller);
-
-	const result: AnswerResult = {
-		query,
-		total_duration_ms: Date.now() - start_time,
-		providers_queried: tasks.map((t) => t.name),
-		providers_succeeded: answers.map((a) => a.source),
-		providers_failed: failed,
-		answers,
-	};
-
-	logger.info('Answer fanout complete', {
-		op: 'answer_fanout_complete',
-		query: query.slice(0, 100),
-		total_duration_ms: result.total_duration_ms,
-		providers_queried: result.providers_queried.length,
-		providers_succeeded: result.providers_succeeded.length,
-		providers_failed: result.providers_failed.length,
-	});
-
-	// Await KV write — prevents REST path from killing the promise after response is sent
-	if (kv_cache && result.answers.length > 0) {
-		try {
-			const answer_write_key = await hash_key('answer:', query);
-			await kv_cache.put(answer_write_key, JSON.stringify(result), { expirationTtl: KV_ANSWER_TTL_SECONDS });
-		} catch (err) {
-			logger.warn('KV answer cache write failed', { op: 'kv_write_error', error: err instanceof Error ? err.message : String(err) });
+	return run_with_trace(trace, async () => {
+		// Check KV cache first
+		if (kv_cache) {
+			try {
+				const answer_cache_key = await hash_key('answer:', query);
+				const cached = await kv_cache.get(answer_cache_key, 'json') as AnswerResult | null;
+				if (cached) {
+					logger.debug('Returning cached answer result', { op: 'answer_cache_hit', query: query.slice(0, 100) });
+					trace.cache_hit = true;
+					trace.record_decision('cache_hit', { query: query.slice(0, 100) });
+					trace.flush_background(cached);
+					return cached;
+				}
+			} catch { /* cache miss or read error — proceed normally */ }
 		}
-	}
 
-	return result;
+		const abort_controller = new AbortController();
+		const tasks = build_tasks(ai_search_ref, web_search_ref, query, abort_controller.signal);
+		if (tasks.length === 0) {
+			logger.warn('No AI providers available for answer', {
+				op: 'answer_fanout',
+				query: query.slice(0, 100),
+			});
+			trace.record_decision('no_providers_available', {});
+			trace.flush_background(null);
+			return null;
+		}
+
+		trace.set_active_providers(tasks.map((t) => t.name));
+		trace.record_decision('fanout_start', {
+			provider_count: tasks.length,
+			providers: tasks.map((t) => t.name),
+		});
+
+		const start_time = Date.now();
+		logger.info('Starting answer fanout', {
+			op: 'answer_fanout_start',
+			query: query.slice(0, 100),
+			providers_count: tasks.length,
+		});
+
+		const { answers, failed } = await execute_tasks(tasks, abort_controller);
+
+		trace.record_decision('fanout_complete', {
+			succeeded: answers.length,
+			failed: failed.length,
+			duration_ms: Date.now() - start_time,
+		});
+
+		const result: AnswerResult = {
+			query,
+			total_duration_ms: Date.now() - start_time,
+			providers_queried: tasks.map((t) => t.name),
+			providers_succeeded: answers.map((a) => a.source),
+			providers_failed: failed,
+			answers,
+		};
+
+		logger.info('Answer fanout complete', {
+			op: 'answer_fanout_complete',
+			query: query.slice(0, 100),
+			total_duration_ms: result.total_duration_ms,
+			providers_queried: result.providers_queried.length,
+			providers_succeeded: result.providers_succeeded.length,
+			providers_failed: result.providers_failed.length,
+		});
+
+		// Await KV write — prevents REST path from killing the promise after response is sent
+		if (kv_cache && result.answers.length > 0) {
+			try {
+				const answer_write_key = await hash_key('answer:', query);
+				await kv_cache.put(answer_write_key, JSON.stringify(result), { expirationTtl: KV_ANSWER_TTL_SECONDS });
+			} catch (err) {
+				logger.warn('KV answer cache write failed', { op: 'kv_write_error', error: err instanceof Error ? err.message : String(err) });
+			}
+		}
+
+		trace.flush_background(result);
+		return result;
+	});
 };
