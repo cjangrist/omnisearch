@@ -46,7 +46,7 @@ export async function handle_rest_search(
 		query = body.query as string;
 		count = Math.min(100, Math.max(0, body.count ?? 0));
 		raw = body.raw === true;
-		fetch_and_cleanup = body.fetch_and_cleanup === true;
+		fetch_and_cleanup = body.fetch_and_cleanup !== false;
 		cleanup_model = body.cleanup_model;
 	} catch (err) {
 		logger.warn('Invalid JSON body', {

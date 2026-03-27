@@ -91,7 +91,7 @@ Set fetch_and_cleanup=true to upgrade results: instead of returning naive search
 					include_snippets: z.boolean().optional()
 						.describe('Include page snippet text in results (default true). Set false to save tokens when you only need titles, URLs, and scores.'),
 					fetch_and_cleanup: z.boolean().optional()
-						.describe('Fetch each result URL and run LLM cleanup extraction with the search query. Replaces naive snippets with grounded extracts (default: false).'),
+						.describe('Fetch each result URL and run LLM cleanup extraction with the search query. Replaces naive snippets with grounded extracts (default: true). Set false to skip cleanup and return raw search snippets.'),
 					cleanup_model: z.string().optional()
 						.describe('Override the cleanup model when fetch_and_cleanup is true'),
 				},
@@ -116,7 +116,7 @@ Set fetch_and_cleanup=true to upgrade results: instead of returning naive search
 						timeout_ms,
 					});
 
-					if (fetch_and_cleanup && fetch_ref && is_cleanup_available()) {
+					if ((fetch_and_cleanup ?? true) && fetch_ref && is_cleanup_available()) {
 						const grounded = await this.fetch_and_cleanup_results(fetch_ref, result, query, cleanup_model);
 						return this.format_web_search_response(query, grounded, include_snippets, true);
 					}
