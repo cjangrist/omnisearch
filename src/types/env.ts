@@ -56,6 +56,10 @@ export interface Env {
 
 	SUPADATA_API_KEY?: string;
 
+	// Cleanup LLM (Groq — OpenAI-compatible, used for post-fetch content extraction)
+	GROQ_API_KEY?: string;
+	GROQ_MODEL?: string;
+
 	// REST auth
 	OPENWEBUI_API_KEY?: string;
 	OMNISEARCH_API_KEY?: string;

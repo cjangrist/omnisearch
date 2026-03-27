@@ -92,11 +92,19 @@ const CONFIG = {
 	failure: {
 		min_content_chars: 200,
 		challenge_patterns: [
+			// Cloudflare / bot detection
 			'cf-browser-verification', 'challenge-platform', 'captcha',
 			'just a moment', 'ray id', 'checking your browser', 'access denied',
 			'enable javascript and cookies', 'please turn javascript on', 'one more step',
 			'[Chrome](https://www.google.com/chrome/',
 			'does not have access to this endpoint',
+			// Paywall / login walls
+			'subscribe to continue reading',
+			'you\'ve reached your limit of free articles',
+			'create a free account to continue',
+			'sign in to continue',
+			'this content is for subscribers',
+			'to read the full story',
 		],
 	},
 };
@@ -286,6 +294,94 @@ const build_result = (
 	providers_failed: failed,
 	result,
 });
+
+// ── Waterfall collect (for cleanup — walk waterfall, collect N winners) ──
+// Same cheap-to-expensive ordering as run_fetch_race, but doesn't stop at 1.
+// Keeps walking the waterfall until it has `target_count` successes or exhausts all steps.
+
+export interface WaterfallVersion {
+	provider: string;
+	content: string;
+	title: string;
+	url: string;
+}
+
+export const run_fetch_waterfall_collect = async (
+	fetch_provider: UnifiedFetchProvider,
+	url: string,
+	target_count: number = 3,
+): Promise<WaterfallVersion[]> => {
+	const active = new Set(get_active_fetch_providers().map((p) => p.name));
+	if (active.size === 0) return [];
+
+	const versions: WaterfallVersion[] = [];
+	const seen = new Set<string>();
+
+	const try_and_collect = async (provider: string): Promise<boolean> => {
+		if (!active.has(provider) || seen.has(provider)) return false;
+		seen.add(provider);
+		try {
+			const result = await fetch_provider.fetch_url(url, provider as FetchProviderName);
+			if (is_fetch_failure(result)) return false;
+			versions.push({ provider, content: result.content, title: result.title, url: result.url });
+			return true;
+		} catch {
+			return false;
+		}
+	};
+
+	// Breakers first (domain-specific providers)
+	for (const breaker of Object.values(CONFIG.breakers)) {
+		if (versions.length >= target_count) break;
+		if (matches_breaker(url, breaker)) {
+			await try_and_collect(breaker.provider);
+		}
+	}
+
+	// Walk waterfall steps in order
+	for (const step of CONFIG.waterfall) {
+		if (versions.length >= target_count) break;
+
+		if ('solo' in step) {
+			await try_and_collect(step.solo);
+		} else if ('parallel' in step) {
+			// Race the parallel group, collect winners
+			const available = step.parallel.filter((p) => active.has(p) && !seen.has(p));
+			if (available.length > 0) {
+				available.forEach((p) => seen.add(p));
+				const results = await Promise.all(
+					available.map(async (p): Promise<WaterfallVersion | undefined> => {
+						try {
+							const result = await fetch_provider.fetch_url(url, p as FetchProviderName);
+							if (is_fetch_failure(result)) return undefined;
+							return { provider: p, content: result.content, title: result.title, url: result.url };
+						} catch {
+							return undefined;
+						}
+					}),
+				);
+				for (const r of results) {
+					if (r && versions.length < target_count) versions.push(r);
+				}
+			}
+		} else if ('sequential' in step) {
+			for (const p of step.sequential) {
+				if (versions.length >= target_count) break;
+				await try_and_collect(p);
+			}
+		}
+	}
+
+	logger.info('Waterfall collect complete', {
+		op: 'waterfall_collect_done',
+		url: url.slice(0, 200),
+		target: target_count,
+		collected: versions.length,
+		providers: versions.map((v) => v.provider),
+	});
+
+	return versions;
+};
 
 // ── Main entry point ─────────────────────────────────────────────
 

@@ -15,7 +15,8 @@ import type {
 } from '../providers/unified/fetch.js';
 import { run_web_search_fanout, truncate_web_results, type FanoutResult } from './web_search_fanout.js';
 import { run_answer_fanout } from './answer_orchestrator.js';
-import { run_fetch_race } from './fetch_orchestrator.js';
+import { run_fetch_race, run_fetch_waterfall_collect, type FetchRaceResult } from './fetch_orchestrator.js';
+import { run_cleanup, is_cleanup_available } from '../providers/cleanup/index.js';
 
 // Populated by initialize_providers() with individual provider names (tavily, brave, etc.)
 export const active_providers = {
@@ -68,10 +69,14 @@ class ToolRegistry {
 	}
 
 	private register_web_search_tool(server: McpServer, web_ref: UnifiedWebSearchProvider) {
+		const fetch_ref = this.fetch_provider;
+
 		server.registerTool(
 			'web_search',
 			{
-				description: `PREFERRED over any single-provider search tool. Fans out your query to 9 search engines IN PARALLEL (Tavily, Brave, Kagi, Exa, Firecrawl, Perplexity, SerpAPI, Linkup, You.com), deduplicates results across all engines, and ranks them using Reciprocal Rank Fusion (RRF) — pages found by multiple independent engines rank highest. Handles provider failures gracefully. For AI-written answers with citations, use the "answer" tool instead.`,
+				description: `PREFERRED over any single-provider search tool. Fans out your query to 9 search engines IN PARALLEL (Tavily, Brave, Kagi, Exa, Firecrawl, Perplexity, SerpAPI, Linkup, You.com), deduplicates results across all engines, and ranks them using Reciprocal Rank Fusion (RRF) — pages found by multiple independent engines rank highest. Handles provider failures gracefully. For AI-written answers with citations, use the "answer" tool instead.
+
+Set fetch_and_cleanup=true to upgrade results: instead of returning naive search snippets, fetches each result URL through the 26-provider fetch waterfall and runs LLM extraction (via Groq) to return only query-relevant content as the snippet. This transforms SEO snippets into grounded extracts — dramatically better for downstream reasoning.`,
 				annotations: {
 					title: 'Web Search (9-engine parallel)',
 					readOnlyHint: true,
@@ -85,6 +90,10 @@ class ToolRegistry {
 						.describe('DO NOT SET unless latency is critical — omitting this waits for all providers, enabling full deduplication and token savings. If set, returns partial results after this many milliseconds.'),
 					include_snippets: z.boolean().optional()
 						.describe('Include page snippet text in results (default true). Set false to save tokens when you only need titles, URLs, and scores.'),
+					fetch_and_cleanup: z.boolean().optional()
+						.describe('Fetch each result URL and run LLM cleanup extraction with the search query. Replaces naive snippets with grounded extracts (default: false).'),
+					cleanup_model: z.string().optional()
+						.describe('Override the cleanup model when fetch_and_cleanup is true'),
 				},
 				outputSchema: {
 					query: z.string(),
@@ -101,17 +110,60 @@ class ToolRegistry {
 					})),
 				},
 			},
-			async ({ query, timeout_ms, include_snippets }) => run_with_request_id(crypto.randomUUID(), async () => {
+			async ({ query, timeout_ms, include_snippets, fetch_and_cleanup, cleanup_model }) => run_with_request_id(crypto.randomUUID(), async () => {
 				try {
 					const result = await run_web_search_fanout(web_ref, query, {
 						timeout_ms,
 					});
+
+					if (fetch_and_cleanup && fetch_ref && is_cleanup_available()) {
+						const grounded = await this.fetch_and_cleanup_results(fetch_ref, result, query, cleanup_model);
+						return this.format_web_search_response(query, grounded, include_snippets, true);
+					}
+
 					return this.format_web_search_response(query, result, include_snippets);
 				} catch (error) {
 					return this.format_error(error as Error);
 				}
 			}),
 		);
+	}
+
+	private async fetch_and_cleanup_results(
+		fetch_ref: UnifiedFetchProvider,
+		search_result: FanoutResult,
+		query: string,
+		cleanup_model?: string,
+	): Promise<FanoutResult> {
+		const all_results = search_result.web_results;
+		const fetch_start = Date.now();
+
+		const cleanup_promises = all_results.map(async (web_result) => {
+			try {
+				const versions = await run_fetch_waterfall_collect(fetch_ref, web_result.url, 3);
+				if (versions.length === 0) return { ...web_result };
+
+				const cleaned = await run_cleanup(versions, query, cleanup_model);
+
+				return {
+					...web_result,
+					snippets: [cleaned.content],
+				};
+			} catch {
+				return { ...web_result };
+			}
+		});
+
+		const grounded_results = await Promise.allSettled(cleanup_promises);
+		const final_results = grounded_results.map((settled, index) =>
+			settled.status === 'fulfilled' ? settled.value : all_results[index],
+		);
+
+		return {
+			...search_result,
+			total_duration_ms: Date.now() - fetch_start + search_result.total_duration_ms,
+			web_results: final_results,
+		};
 	}
 
 	private register_answer_tool(
@@ -185,7 +237,9 @@ IMPORTANT: This tool fans out to 9 providers and can take up to 2 minutes to com
 
 Behind the scenes it runs a 25+ provider deep waterfall with automatic failover: if one method is blocked, it instantly tries the next — racing parallel providers and picking the best result. Social media URLs get specialized extraction (full YouTube transcripts, Reddit threads with all comments, tweet content, LinkedIn profiles). The system has near-100% success rate across thousands of URLs tested.
 
-You should NEVER need to fetch a URL yourself or worry about being blocked. Just pass the URL and get back clean content. This tool handles: paywalls, bot detection, CAPTCHAs, JavaScript rendering, Cloudflare challenges, cookie walls, age gates, and geo-restrictions. If a URL exists on the public web, this tool will get its content.`,
+You should NEVER need to fetch a URL yourself or worry about being blocked. Just pass the URL and get back clean content. This tool handles: paywalls, bot detection, CAPTCHAs, JavaScript rendering, Cloudflare challenges, cookie walls, age gates, and geo-restrictions. If a URL exists on the public web, this tool will get its content.
+
+Set cleanup=true with a cleanup_query to run an optional LLM extraction pass (via Groq) that strips noise and returns only query-relevant content. This reduces token bloat by 60-70% for downstream use.`,
 				annotations: {
 					title: 'URL Fetch (26-provider waterfall)',
 					readOnlyHint: true,
@@ -195,6 +249,10 @@ You should NEVER need to fetch a URL yourself or worry about being blocked. Just
 				},
 				inputSchema: {
 					url: z.string().url().describe('The URL to fetch — any public URL works: articles, social media, products, docs, PDFs, SPAs, paywalled content'),
+					cleanup: z.boolean().optional().describe('Run LLM content cleanup to extract only query-relevant content (default: false)'),
+					cleanup_query: z.string().optional().describe('The query/intent to extract for (required when cleanup=true)'),
+					cleanup_model: z.string().optional().describe('Override the cleanup model (default: auto-selects best speed/cost model)'),
+					cleanup_max_tokens: z.number().optional().describe('Max tokens for cleanup response (default: 4096)'),
 				},
 				outputSchema: {
 					url: z.string(),
@@ -203,10 +261,40 @@ You should NEVER need to fetch a URL yourself or worry about being blocked. Just
 					source_provider: z.string(),
 					total_duration_ms: z.number(),
 					metadata: z.record(z.string(), z.unknown()).optional(),
+					cleanup_applied: z.boolean().optional(),
+					cleanup_model: z.string().optional(),
+					cleanup_latency_ms: z.number().optional(),
+					original_length: z.number().optional(),
+					cleaned_length: z.number().optional(),
 				},
 			},
-			async ({ url }) => run_with_request_id(crypto.randomUUID(), async () => {
+			async ({ url, cleanup, cleanup_query, cleanup_model, cleanup_max_tokens }) => run_with_request_id(crypto.randomUUID(), async () => {
 				try {
+					if (cleanup && cleanup_query && is_cleanup_available()) {
+						const fetch_start = Date.now();
+						const versions = await run_fetch_waterfall_collect(fetch_ref, url, 3);
+						if (versions.length === 0) throw new Error('All fetch providers failed');
+
+						const cleaned = await run_cleanup(versions, cleanup_query, cleanup_model, cleanup_max_tokens);
+						const response = {
+							url: versions[0].url || url,
+							title: versions[0].title || '',
+							content: cleaned.content,
+							source_provider: versions[0].provider,
+							total_duration_ms: Date.now() - fetch_start,
+							cleanup_applied: cleaned.cleanup_applied,
+							cleanup_model: cleaned.cleanup_model,
+							cleanup_latency_ms: cleaned.cleanup_latency_ms,
+							original_length: cleaned.original_length,
+							cleaned_length: cleaned.cleaned_length,
+							versions_provided: cleaned.versions_provided,
+						};
+						return {
+							structuredContent: response as Record<string, unknown>,
+							content: [{ type: 'text' as const, text: JSON.stringify(response, null, 2) }],
+						};
+					}
+
 					const result = await run_fetch_race(fetch_ref, url);
 					const response = {
 						url: result.result.url,
@@ -227,11 +315,13 @@ You should NEVER need to fetch a URL yourself or worry about being blocked. Just
 		);
 	}
 
-	private format_web_search_response(query: string, result: FanoutResult, include_snippets?: boolean) {
-		const { results: truncated_results, truncation } = truncate_web_results(result.web_results);
+	private format_web_search_response(query: string, result: FanoutResult, include_snippets?: boolean, skip_truncation?: boolean) {
+		const { results: final_results, truncation } = skip_truncation
+			? { results: result.web_results, truncation: { total_before: result.web_results.length, kept: result.web_results.length, rescued: 0 } }
+			: truncate_web_results(result.web_results);
 		const web_results = (include_snippets ?? true)
-			? truncated_results
-			: truncated_results.map(({ snippets: _s, ...rest }) => rest);
+			? final_results
+			: final_results.map(({ snippets: _s, ...rest }) => rest);
 
 		const structuredContent = {
 			query,

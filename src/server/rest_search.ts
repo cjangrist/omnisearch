@@ -7,9 +7,11 @@
 import { ProviderError } from '../common/types.js';
 import { loggers } from '../common/logger.js';
 import { authenticate_rest_request, sanitize_for_log } from '../common/utils.js';
-import { get_web_search_provider } from './tools.js';
-import { run_web_search_fanout } from './web_search_fanout.js';
+import { get_web_search_provider, get_fetch_provider } from './tools.js';
+import { run_web_search_fanout, truncate_web_results } from './web_search_fanout.js';
+import { run_fetch_waterfall_collect } from './fetch_orchestrator.js';
 import { OPENWEBUI_API_KEY, OMNISEARCH_API_KEY } from '../config/env.js';
+import { run_cleanup, is_cleanup_available } from '../providers/cleanup/index.js';
 
 const logger = loggers.rest();
 
@@ -37,11 +39,15 @@ export async function handle_rest_search(
 	let query: string;
 	let count: number;
 	let raw: boolean;
+	let fetch_and_cleanup: boolean;
+	let cleanup_model: string | undefined;
 	try {
-		const body = await request.json() as { query?: string; count?: number; raw?: boolean };
+		const body = await request.json() as { query?: string; count?: number; raw?: boolean; fetch_and_cleanup?: boolean; cleanup_model?: string };
 		query = body.query as string;
 		count = Math.min(100, Math.max(0, body.count ?? 0));
 		raw = body.raw === true;
+		fetch_and_cleanup = body.fetch_and_cleanup === true;
+		cleanup_model = body.cleanup_model;
 	} catch (err) {
 		logger.warn('Invalid JSON body', {
 			op: 'request_validation',
@@ -119,7 +125,34 @@ export async function handle_rest_search(
 		return Response.json({ error: message }, { status: 502 });
 	}
 
-	const sorted = (count > 0 ? result.web_results.slice(0, count) : result.web_results)
+	let web_results = result.web_results;
+
+	if (fetch_and_cleanup && is_cleanup_available()) {
+		const fetch_provider = get_fetch_provider();
+		if (fetch_provider) {
+			// No truncation — cleanup compresses content enough to return all results
+			const targets = count > 0 ? web_results.slice(0, count) : web_results;
+
+			const cleanup_promises = targets.map(async (web_result) => {
+				try {
+					const versions = await run_fetch_waterfall_collect(fetch_provider, web_result.url, 3);
+					if (versions.length === 0) return web_result;
+					const cleaned = await run_cleanup(versions, query, cleanup_model);
+					if (cleaned.content === 'NO_RELEVANT_CONTENT') return web_result;
+					return { ...web_result, snippets: [cleaned.content] };
+				} catch {
+					return web_result;
+				}
+			});
+
+			const settled = await Promise.allSettled(cleanup_promises);
+			web_results = settled.map((s, i) =>
+				s.status === 'fulfilled' ? s.value : targets[i],
+			);
+		}
+	}
+
+	const sorted = (count > 0 ? web_results.slice(0, count) : web_results)
 		.map((r) => ({
 			link: r.url,
 			title: r.title || '',
