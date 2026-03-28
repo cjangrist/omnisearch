@@ -17,6 +17,7 @@ import { run_web_search_fanout, truncate_web_results, type FanoutResult } from '
 import { run_answer_fanout } from './answer_orchestrator.js';
 import { run_fetch_race, run_fetch_waterfall_collect, type FetchRaceResult } from './fetch_orchestrator.js';
 import { run_cleanup, is_cleanup_available } from '../providers/cleanup/index.js';
+import { cleanup_search_results } from './cleanup_orchestrator.js';
 
 // Populated by initialize_providers() with individual provider names (tavily, brave, etc.)
 export const active_providers = {
@@ -117,7 +118,7 @@ Set fetch_and_cleanup=true to upgrade results: instead of returning naive search
 					});
 
 					if ((fetch_and_cleanup ?? true) && fetch_ref && is_cleanup_available()) {
-						const grounded = await this.fetch_and_cleanup_results(fetch_ref, result, query, cleanup_model);
+						const grounded = await cleanup_search_results(fetch_ref, result, query, cleanup_model);
 						return this.format_web_search_response(query, grounded, include_snippets, true);
 					}
 
@@ -127,43 +128,6 @@ Set fetch_and_cleanup=true to upgrade results: instead of returning naive search
 				}
 			}),
 		);
-	}
-
-	private async fetch_and_cleanup_results(
-		fetch_ref: UnifiedFetchProvider,
-		search_result: FanoutResult,
-		query: string,
-		cleanup_model?: string,
-	): Promise<FanoutResult> {
-		const all_results = search_result.web_results;
-		const fetch_start = Date.now();
-
-		const cleanup_promises = all_results.map(async (web_result) => {
-			try {
-				const versions = await run_fetch_waterfall_collect(fetch_ref, web_result.url, 3);
-				if (versions.length === 0) return { ...web_result };
-
-				const cleaned = await run_cleanup(versions, query, cleanup_model);
-
-				return {
-					...web_result,
-					snippets: [cleaned.content],
-				};
-			} catch {
-				return { ...web_result };
-			}
-		});
-
-		const grounded_results = await Promise.allSettled(cleanup_promises);
-		const final_results = grounded_results.map((settled, index) =>
-			settled.status === 'fulfilled' ? settled.value : all_results[index],
-		);
-
-		return {
-			...search_result,
-			total_duration_ms: Date.now() - fetch_start + search_result.total_duration_ms,
-			web_results: final_results,
-		};
 	}
 
 	private register_answer_tool(

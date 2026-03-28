@@ -9,9 +9,9 @@ import { loggers } from '../common/logger.js';
 import { authenticate_rest_request, sanitize_for_log } from '../common/utils.js';
 import { get_web_search_provider, get_fetch_provider } from './tools.js';
 import { run_web_search_fanout, truncate_web_results } from './web_search_fanout.js';
-import { run_fetch_waterfall_collect } from './fetch_orchestrator.js';
 import { OPENWEBUI_API_KEY, OMNISEARCH_API_KEY } from '../config/env.js';
-import { run_cleanup, is_cleanup_available } from '../providers/cleanup/index.js';
+import { is_cleanup_available } from '../providers/cleanup/index.js';
+import { cleanup_search_results } from './cleanup_orchestrator.js';
 
 const logger = loggers.rest();
 
@@ -130,25 +130,9 @@ export async function handle_rest_search(
 	if (fetch_and_cleanup && is_cleanup_available()) {
 		const fetch_provider = get_fetch_provider();
 		if (fetch_provider) {
-			// No truncation — cleanup compresses content enough to return all results
-			const targets = count > 0 ? web_results.slice(0, count) : web_results;
-
-			const cleanup_promises = targets.map(async (web_result) => {
-				try {
-					const versions = await run_fetch_waterfall_collect(fetch_provider, web_result.url, 3);
-					if (versions.length === 0) return web_result;
-					const cleaned = await run_cleanup(versions, query, cleanup_model);
-					if (cleaned.content === 'NO_RELEVANT_CONTENT') return web_result;
-					return { ...web_result, snippets: [cleaned.content] };
-				} catch {
-					return web_result;
-				}
-			});
-
-			const settled = await Promise.allSettled(cleanup_promises);
-			web_results = settled.map((s, i) =>
-				s.status === 'fulfilled' ? s.value : targets[i],
-			);
+			const max_results = count > 0 ? count : undefined;
+			const cleaned = await cleanup_search_results(fetch_provider, result, query, cleanup_model, max_results);
+			web_results = cleaned.web_results;
 		}
 	}
 
