@@ -7,7 +7,7 @@ import type { FanoutResult } from './web_search_fanout.js';
 import { run_fetch_waterfall_collect } from './fetch_orchestrator.js';
 import { run_cleanup } from '../providers/cleanup/index.js';
 
-const MAX_CLEANUP_RESULTS = 20;
+const MAX_CLEANUP_RESULTS = 8;
 const CONCURRENCY = 8;
 
 /**

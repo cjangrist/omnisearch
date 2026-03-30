@@ -117,12 +117,15 @@ Set fetch_and_cleanup=true to upgrade results: instead of returning naive search
 						timeout_ms,
 					});
 
+					// Truncate first (RRF top-N) to limit what gets cleaned up
+					const truncated_result = this.apply_truncation(result);
+
 					if ((fetch_and_cleanup ?? true) && fetch_ref && is_cleanup_available()) {
-						const grounded = await cleanup_search_results(fetch_ref, result, query, cleanup_model);
+						const grounded = await cleanup_search_results(fetch_ref, truncated_result, query, cleanup_model);
 						return this.format_web_search_response(query, grounded, include_snippets, true);
 					}
 
-					return this.format_web_search_response(query, result, include_snippets);
+					return this.format_web_search_response(query, truncated_result, include_snippets, true);
 				} catch (error) {
 					return this.format_error(error as Error);
 				}
@@ -277,6 +280,11 @@ Set cleanup=true with a cleanup_query to run an optional LLM extraction pass (vi
 				}
 			}),
 		);
+	}
+
+	private apply_truncation(result: FanoutResult): FanoutResult {
+		const { results, truncation } = truncate_web_results(result.web_results);
+		return { ...result, web_results: results };
 	}
 
 	private format_web_search_response(query: string, result: FanoutResult, include_snippets?: boolean, skip_truncation?: boolean) {
