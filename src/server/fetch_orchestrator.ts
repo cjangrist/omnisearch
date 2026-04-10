@@ -57,6 +57,10 @@ interface BreakerConfig {
 
 const CONFIG = {
 	breakers: {
+		github: {
+			provider: 'github',
+			domains: ['github.com', 'gist.github.com', 'raw.githubusercontent.com'],
+		},
 		youtube: {
 			provider: 'supadata',
 			domains: ['youtube.com', 'youtu.be'],
@@ -113,10 +117,16 @@ export interface FetchRaceResult {
 
 // ── Failure detection ────────────────────────────────────────────
 
-const is_fetch_failure = (result: FetchResult): boolean => {
+// API-native providers return structured data, not scraped HTML.
+// Challenge-pattern detection (Cloudflare, captcha, etc.) causes false positives
+// when docs legitimately mention "access denied", "captcha", etc.
+const API_NATIVE_PROVIDERS = new Set(['github', 'supadata']);
+
+const is_fetch_failure = (result: FetchResult, provider?: string): boolean => {
 	if (!result.content || result.content.length < CONFIG.failure.min_content_chars) {
 		return true;
 	}
+	if (provider && API_NATIVE_PROVIDERS.has(provider)) return false;
 	const lower = result.content.toLowerCase();
 	return CONFIG.failure.challenge_patterns.some((p) => lower.includes(p.toLowerCase()));
 };
@@ -142,7 +152,7 @@ const try_provider = async (
 	provider: string,
 ): Promise<FetchResult> => {
 	const result = await unified.fetch_url(url, provider as FetchProviderName);
-	if (is_fetch_failure(result)) {
+	if (is_fetch_failure(result, provider)) {
 		throw new ProviderError(
 			ErrorType.PROVIDER_ERROR,
 			`Blocked or empty (${result.content?.length ?? 0} chars)`,
@@ -292,7 +302,7 @@ const build_result = (
 export const run_fetch_race = async (
 	fetch_provider: UnifiedFetchProvider,
 	url: string,
-	options?: { provider?: FetchProviderName },
+	options?: { provider?: FetchProviderName; skip_cache?: boolean },
 ): Promise<FetchRaceResult> => {
 	const trace = new TraceContext(crypto.randomUUID(), 'fetch');
 	trace.set_strategy(options?.provider ? 'explicit_provider' : 'waterfall');
@@ -303,8 +313,8 @@ export const run_fetch_race = async (
 		const attempted: string[] = [];
 		const failed: Array<{ provider: string; error: string; duration_ms: number }> = [];
 
-		// Check KV cache first (skip for explicit provider mode — user wants a specific provider)
-		if (!options?.provider) {
+		// Check KV cache first (skip for explicit provider mode or skip_cache flag)
+		if (!options?.provider && !options?.skip_cache) {
 			const cached = await get_fetch_cached(url);
 			if (cached) {
 				logger.debug('Returning cached fetch result', { op: 'fetch_cache_hit', url: url.slice(0, 200), provider: cached.provider_used });
@@ -327,7 +337,7 @@ export const run_fetch_race = async (
 				url: url.slice(0, 200),
 			});
 			const result = await fetch_provider.fetch_url(url, provider);
-			if (is_fetch_failure(result)) {
+			if (is_fetch_failure(result, provider)) {
 				const error_msg = `${provider} returned blocked or empty content (${result.content?.length ?? 0} chars)`;
 				trace.record_provider_error(provider, error_msg, Date.now() - start_time);
 				trace.flush_background({ error: error_msg });

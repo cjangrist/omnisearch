@@ -250,6 +250,11 @@ export const config = {
 			base_url: 'https://api.supadata.ai/v1',
 			timeout: 60000,
 		},
+		github: {
+			api_key: undefined as string | undefined,
+			base_url: 'https://api.github.com',
+			timeout: 30000,
+		},
 	},
 };
 
@@ -348,6 +353,7 @@ export const initialize_config = (env: Env) => {
 	config.fetch.cloudflare_browser.api_key = env.CLOUDFLARE_API_KEY;
 	config.fetch.serpapi.api_key = env.SERPAPI_API_KEY;
 	config.fetch.supadata.api_key = env.SUPADATA_API_KEY;
+	config.fetch.github.api_key = env.GITHUB_API_KEY;
 
 	// Fetch retry/timeout tuning
 

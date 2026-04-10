@@ -30,10 +30,12 @@ export async function handle_rest_fetch(
 	// Parse request body
 	let url: string;
 	let provider: string | undefined;
+	let skip_cache = false;
 	try {
-		const body = await request.json() as { url?: string; provider?: string };
+		const body = await request.json() as { url?: string; provider?: string; skip_cache?: boolean };
 		url = body.url as string;
 		provider = body.provider;
+		skip_cache = body.skip_cache === true;
 	} catch {
 		return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
 	}
@@ -85,6 +87,7 @@ export async function handle_rest_fetch(
 	try {
 		const result = await run_fetch_race(fetch_provider, url, {
 			provider: provider as FetchProviderName | undefined,
+			skip_cache,
 		});
 
 		const duration = Date.now() - start_time;

@@ -34,6 +34,7 @@ import { LeadMagicFetchProvider, registration as leadmagic_reg } from '../fetch/
 import { CloudflareBrowserFetchProvider, registration as cloudflare_browser_reg } from '../fetch/cloudflare_browser/index.js';
 import { SerpapiFetchProvider, registration as serpapi_reg } from '../fetch/serpapi/index.js';
 import { SupadataFetchProvider, registration as supadata_reg } from '../fetch/supadata/index.js';
+import { GitHubFetchProvider, registration as github_reg } from '../fetch/github/index.js';
 
 // ─── ADD ONE LINE HERE TO REGISTER A NEW FETCH PROVIDER ─────────────
 const PROVIDERS = [
@@ -63,6 +64,7 @@ const PROVIDERS = [
 	{ name: 'cloudflare_browser', ...cloudflare_browser_reg, factory: () => new CloudflareBrowserFetchProvider() },
 	{ name: 'serpapi', ...serpapi_reg, factory: () => new SerpapiFetchProvider() },
 	{ name: 'supadata', ...supadata_reg, factory: () => new SupadataFetchProvider() },
+	{ name: 'github', ...github_reg, factory: () => new GitHubFetchProvider() },
 ] as const;
 // ─────────────────────────────────────────────────────────────────────
 
