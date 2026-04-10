@@ -55,6 +55,7 @@ export interface Env {
 	CLOUDFLARE_API_KEY?: string;
 
 	SUPADATA_API_KEY?: string;
+	GITHUB_API_KEY?: string;
 
 	// REST auth
 	OPENWEBUI_API_KEY?: string;
