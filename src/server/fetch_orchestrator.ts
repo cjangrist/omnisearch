@@ -113,6 +113,7 @@ export interface FetchRaceResult {
 	providers_attempted: string[];
 	providers_failed: Array<{ provider: string; error: string; duration_ms: number }>;
 	result: FetchResult;
+	alternative_results?: Array<{ provider: string; result: FetchResult }>;
 }
 
 // ── Failure detection ────────────────────────────────────────────
@@ -297,12 +298,28 @@ const build_result = (
 	result,
 });
 
+// ── Skip-providers parser ───────────────────────────────────────
+// Accepts whatever the LLM sends: JSON array, comma string, bracketed
+// string, quoted variants, single string, null/undefined → string[].
+
+export const parse_skip_providers = (raw: unknown): string[] => {
+	if (raw == null) return [];
+	if (Array.isArray(raw)) {
+		return raw.map((v) => String(v).trim().toLowerCase()).filter(Boolean);
+	}
+	const str = String(raw).trim();
+	if (!str) return [];
+	// Strip surrounding brackets and quotes: "[\"tavily\", \"firecrawl\"]" → tavily, firecrawl
+	const stripped = str.replace(/^\[|\]$/g, '').replace(/"/g, '').replace(/'/g, '');
+	return stripped.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+};
+
 // ── Main entry point ─────────────────────────────────────────────
 
 export const run_fetch_race = async (
 	fetch_provider: UnifiedFetchProvider,
 	url: string,
-	options?: { provider?: FetchProviderName; skip_cache?: boolean },
+	options?: { provider?: FetchProviderName; skip_cache?: boolean; skip_providers?: string[] },
 ): Promise<FetchRaceResult> => {
 	const trace = new TraceContext(crypto.randomUUID(), 'fetch');
 	trace.set_strategy(options?.provider ? 'explicit_provider' : 'waterfall');
@@ -313,8 +330,9 @@ export const run_fetch_race = async (
 		const attempted: string[] = [];
 		const failed: Array<{ provider: string; error: string; duration_ms: number }> = [];
 
-		// Check KV cache first (skip for explicit provider mode or skip_cache flag)
-		if (!options?.provider && !options?.skip_cache) {
+		// Check KV cache first (skip for explicit provider mode, skip_cache flag, or skip_providers)
+		const has_skip_providers = (options?.skip_providers?.length ?? 0) > 0;
+		if (!options?.provider && !options?.skip_cache && !has_skip_providers) {
 			const cached = await get_fetch_cached(url);
 			if (cached) {
 				logger.debug('Returning cached fetch result', { op: 'fetch_cache_hit', url: url.slice(0, 200), provider: cached.provider_used });
@@ -352,9 +370,10 @@ export const run_fetch_race = async (
 		// Auto waterfall mode
 		logger.info('Waterfall start', { op: 'waterfall_start', url: url.slice(0, 200) });
 
-		const active = new Set(get_active_fetch_providers().map((p) => p.name));
+		const skip_set = new Set(options?.skip_providers ?? []);
+		const active = new Set(get_active_fetch_providers().map((p) => p.name).filter((n) => !skip_set.has(n)));
 		trace.set_active_providers(Array.from(active));
-		trace.record_decision('waterfall_start', { active_providers: Array.from(active), url: url.slice(0, 200) });
+		trace.record_decision('waterfall_start', { active_providers: Array.from(active), skipped_providers: Array.from(skip_set), url: url.slice(0, 200) });
 
 		// Helper: build result and cache it for future requests
 		const build_and_cache = async (provider: string, result: FetchResult): Promise<FetchRaceResult> => {
@@ -365,8 +384,14 @@ export const run_fetch_race = async (
 
 		const ctx: StepContext = { unified: fetch_provider, url, active, attempted, failed };
 
+		// When skip_providers is used we know the page is tricky — proactively
+		// fetch from TWO providers so the caller can compare results.
+		const target_count = has_skip_providers ? 2 : 1;
+		const winners: Array<{ provider: string; result: FetchResult }> = [];
+
 		// Breakers: domain-specific providers tried before the waterfall
 		for (const [breaker_name, breaker_config] of Object.entries(CONFIG.breakers)) {
+			if (winners.length >= target_count) break;
 			if (matches_breaker(url, breaker_config) && active.has(breaker_config.provider)) {
 				trace.record_decision('breaker_match', { breaker: breaker_name, provider: breaker_config.provider });
 				logger.info('Breaker matched', {
@@ -378,37 +403,48 @@ export const run_fetch_race = async (
 				const breaker_result = await run_solo(ctx, breaker_config.provider);
 				if (breaker_result) {
 					trace.record_decision('breaker_resolved', { breaker: breaker_name, provider: breaker_config.provider });
-					const race_result = await build_and_cache(breaker_config.provider, breaker_result);
-					trace.flush_background(race_result);
-					return race_result;
+					winners.push({ provider: breaker_config.provider, result: breaker_result });
+				} else {
+					trace.record_decision('breaker_fallthrough', { breaker: breaker_name });
+					logger.warn('Breaker failed, continuing', { op: 'breaker_fallthrough', breaker: breaker_name });
 				}
-				trace.record_decision('breaker_fallthrough', { breaker: breaker_name });
-				logger.warn('Breaker failed, continuing', { op: 'breaker_fallthrough', breaker: breaker_name });
 			}
 		}
 
 		// Waterfall: walk steps top-to-bottom
 		for (const step of CONFIG.waterfall) {
+			if (winners.length >= target_count) break;
 			const step_label = 'solo' in step ? `solo:${step.solo}` : 'parallel' in step ? `parallel:${step.parallel.join(',')}` : `sequential:${(step as { sequential: string[] }).sequential.join(',')}`;
 			trace.record_decision('waterfall_step', { step: step_label });
 
 			const step_result = await execute_step(ctx, step);
 			if (step_result) {
-				trace.record_decision('waterfall_resolved', {
-					provider: step_result.provider,
-					steps_tried: attempted.length,
-					total_ms: Date.now() - start_time,
-				});
-				logger.info('Waterfall resolved', {
-					op: 'waterfall_done',
-					provider: step_result.provider,
-					steps_tried: attempted.length,
-					total_ms: Date.now() - start_time,
-				});
-				const race_result = await build_and_cache(step_result.provider, step_result.result);
-				trace.flush_background(race_result);
-				return race_result;
+				winners.push(step_result);
 			}
+		}
+
+		// Return collected results
+		if (winners.length > 0) {
+			const primary = winners[0];
+			trace.record_decision('waterfall_resolved', {
+				provider: primary.provider,
+				steps_tried: attempted.length,
+				total_ms: Date.now() - start_time,
+				alternative_count: winners.length - 1,
+			});
+			logger.info('Waterfall resolved', {
+				op: 'waterfall_done',
+				provider: primary.provider,
+				steps_tried: attempted.length,
+				total_ms: Date.now() - start_time,
+				alternative_count: winners.length - 1,
+			});
+			const race_result = await build_and_cache(primary.provider, primary.result);
+			if (winners.length > 1) {
+				race_result.alternative_results = winners.slice(1);
+			}
+			trace.flush_background(race_result);
+			return race_result;
 		}
 
 		// All exhausted

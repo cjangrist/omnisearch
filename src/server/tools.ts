@@ -15,7 +15,7 @@ import type {
 } from '../providers/unified/fetch.js';
 import { run_web_search_fanout, truncate_web_results, type FanoutResult } from './web_search_fanout.js';
 import { run_answer_fanout } from './answer_orchestrator.js';
-import { run_fetch_race } from './fetch_orchestrator.js';
+import { run_fetch_race, parse_skip_providers } from './fetch_orchestrator.js';
 
 // Populated by initialize_providers() with individual provider names (tavily, brave, etc.)
 export const active_providers = {
@@ -185,7 +185,9 @@ IMPORTANT: This tool fans out to 9 providers and can take up to 2 minutes to com
 
 Behind the scenes it runs a 25+ provider deep waterfall with automatic failover: if one method is blocked, it instantly tries the next — racing parallel providers and picking the best result. Social media URLs get specialized extraction (full YouTube transcripts, Reddit threads with all comments, tweet content, LinkedIn profiles). The system has near-100% success rate across thousands of URLs tested.
 
-You should NEVER need to fetch a URL yourself or worry about being blocked. Just pass the URL and get back clean content. This tool handles: paywalls, bot detection, CAPTCHAs, JavaScript rendering, Cloudflare challenges, cookie walls, age gates, and geo-restrictions. If a URL exists on the public web, this tool will get its content.`,
+You should NEVER need to fetch a URL yourself or worry about being blocked. Just pass the URL and get back clean content. This tool handles: paywalls, bot detection, CAPTCHAs, JavaScript rendering, Cloudflare challenges, cookie walls, age gates, and geo-restrictions. If a URL exists on the public web, this tool will get its content.
+
+If the fetched content is missing, incomplete, or doesn't match what you expect from the page, retry the same URL with skip_providers set to the provider that failed (shown in source_provider). For example if Tavily returned a paywall page, retry with skip_providers: "tavily" to force the next provider in the waterfall.`,
 				annotations: {
 					title: 'URL Fetch (26-provider waterfall)',
 					readOnlyHint: true,
@@ -195,6 +197,8 @@ You should NEVER need to fetch a URL yourself or worry about being blocked. Just
 				},
 				inputSchema: {
 					url: z.string().url().describe('The URL to fetch — any public URL works: articles, social media, products, docs, PDFs, SPAs, paywalled content'),
+					skip_providers: z.string().optional()
+						.describe('Comma-separated provider names to skip in the waterfall (e.g. "tavily,firecrawl"). Use when a provider returned bad results and you want to retry without it.'),
 				},
 				outputSchema: {
 					url: z.string(),
@@ -205,10 +209,11 @@ You should NEVER need to fetch a URL yourself or worry about being blocked. Just
 					metadata: z.record(z.string(), z.unknown()).optional(),
 				},
 			},
-			async ({ url }) => run_with_request_id(crypto.randomUUID(), async () => {
+			async ({ url, skip_providers: raw_skip }) => run_with_request_id(crypto.randomUUID(), async () => {
 				try {
-					const result = await run_fetch_race(fetch_ref, url);
-					const response = {
+					const skip_providers = parse_skip_providers(raw_skip);
+					const result = await run_fetch_race(fetch_ref, url, { skip_providers });
+					const response: Record<string, unknown> = {
 						url: result.result.url,
 						title: result.result.title,
 						content: result.result.content,
@@ -216,8 +221,17 @@ You should NEVER need to fetch a URL yourself or worry about being blocked. Just
 						total_duration_ms: result.total_duration_ms,
 						metadata: result.result.metadata,
 					};
+					if (result.alternative_results?.length) {
+						response.alternative_results = result.alternative_results.map((a) => ({
+							url: a.result.url,
+							title: a.result.title,
+							content: a.result.content,
+							source_provider: a.provider,
+							metadata: a.result.metadata,
+						}));
+					}
 					return {
-						structuredContent: response as Record<string, unknown>,
+						structuredContent: response,
 						content: [{ type: 'text' as const, text: JSON.stringify(response, null, 2) }],
 					};
 				} catch (error) {
