@@ -7,7 +7,7 @@ import { ErrorType, ProviderError } from '../common/types.js';
 import { loggers } from '../common/logger.js';
 import { authenticate_rest_request, sanitize_for_log } from '../common/utils.js';
 import { get_fetch_provider } from './tools.js';
-import { run_fetch_race } from './fetch_orchestrator.js';
+import { run_fetch_race, parse_skip_providers } from './fetch_orchestrator.js';
 import { get_active_fetch_providers, type FetchProviderName } from '../providers/unified/fetch.js';
 import { OPENWEBUI_API_KEY, OMNISEARCH_API_KEY } from '../config/env.js';
 
@@ -31,11 +31,13 @@ export async function handle_rest_fetch(
 	let url: string;
 	let provider: string | undefined;
 	let skip_cache = false;
+	let skip_providers: string[] = [];
 	try {
-		const body = await request.json() as { url?: string; provider?: string; skip_cache?: boolean };
+		const body = await request.json() as { url?: string; provider?: string; skip_cache?: boolean; skip_providers?: unknown };
 		url = body.url as string;
 		provider = body.provider;
 		skip_cache = body.skip_cache === true;
+		skip_providers = parse_skip_providers(body.skip_providers);
 	} catch {
 		return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
 	}
@@ -88,6 +90,7 @@ export async function handle_rest_fetch(
 		const result = await run_fetch_race(fetch_provider, url, {
 			provider: provider as FetchProviderName | undefined,
 			skip_cache,
+			skip_providers,
 		});
 
 		const duration = Date.now() - start_time;
@@ -111,6 +114,14 @@ export async function handle_rest_fetch(
 			duration_ms: result.total_duration_ms,
 			providers_attempted: result.providers_attempted,
 			providers_failed: result.providers_failed,
+			skip_providers,
+			alternative_results: result.alternative_results?.map((a) => ({
+				url: a.result.url,
+				title: a.result.title,
+				content: a.result.content,
+				source_provider: a.provider,
+				metadata: a.result.metadata,
+			})),
 			metadata: result.result.metadata,
 		});
 	} catch (err) {
