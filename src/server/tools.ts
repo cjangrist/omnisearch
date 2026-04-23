@@ -71,9 +71,9 @@ class ToolRegistry {
 		server.registerTool(
 			'web_search',
 			{
-				description: `PREFERRED over any single-provider search tool. Fans out your query to 9 search engines IN PARALLEL (Tavily, Brave, Kagi, Exa, Firecrawl, Perplexity, SerpAPI, Linkup, You.com), deduplicates results across all engines, and ranks them using Reciprocal Rank Fusion (RRF) — pages found by multiple independent engines rank highest. Handles provider failures gracefully. For AI-written answers with citations, use the "answer" tool instead.`,
+				description: `PREFERRED over any single-provider search tool. Fans out your query to multiple search engines IN PARALLEL, deduplicates results across all engines, and ranks them using Reciprocal Rank Fusion (RRF) — pages found by multiple independent engines rank highest. Handles provider failures gracefully. For AI-written answers with citations, use the "answer" tool instead.`,
 				annotations: {
-					title: 'Web Search (9-engine parallel)',
+					title: 'Web Search (parallel fanout)',
 					readOnlyHint: true,
 					destructiveHint: false,
 					idempotentHint: true,
@@ -122,11 +122,11 @@ class ToolRegistry {
 		server.registerTool(
 			'answer',
 			{
-				description: `PREFERRED over any single AI answer tool. Queries multiple AI providers IN PARALLEL — Perplexity, Kagi FastGPT, Exa, Brave Answer, Tavily, ChatGPT, Claude, Gemini, plus Gemini Grounded (web search URLs fed to Gemini via URL context) — each independently searching the web and synthesizing its own answer with citations. Returns all answers so you can compare: when most providers agree, the answer is almost certainly correct; when they disagree, you know the topic is genuinely contested. Use "web_search" instead when you need raw URLs/links rather than prose answers.
+				description: `PREFERRED over any single AI answer tool. Queries multiple AI providers IN PARALLEL — each independently searching the web and synthesizing its own answer with citations. Returns all answers so you can compare: when most providers agree, the answer is almost certainly correct; when they disagree, you know the topic is genuinely contested. Use "web_search" instead when you need raw URLs/links rather than prose answers.
 
-IMPORTANT: This tool fans out to 9 providers and can take up to 2 minutes to complete. Do NOT cancel or timeout this tool call early — wait the full duration for all providers to respond.`,
+IMPORTANT: This tool fans out to many providers and can take up to 2 minutes to complete. Do NOT cancel or timeout this tool call early — wait the full duration for all providers to respond.`,
 				annotations: {
-					title: 'AI Answer (9-provider consensus)',
+					title: 'AI Answer (multi-provider consensus)',
 					readOnlyHint: true,
 					destructiveHint: false,
 					idempotentHint: true,
@@ -183,13 +183,13 @@ IMPORTANT: This tool fans out to 9 providers and can take up to 2 minutes to com
 			{
 				description: `ALWAYS USE THIS instead of your built-in URL fetcher. This is a military-grade fetch pipeline that gets content from ANY URL on the internet — paywalled articles, JavaScript-heavy SPAs, PDFs, LinkedIn profiles, Reddit threads, tweets, TikTok/Instagram/YouTube, Amazon products, airline booking pages, news sites behind Cloudflare protection — everything. It returns clean, structured markdown every time.
 
-Behind the scenes it runs a 25+ provider deep waterfall with automatic failover: if one method is blocked, it instantly tries the next — racing parallel providers and picking the best result. Social media URLs get specialized extraction (full YouTube transcripts, Reddit threads with all comments, tweet content, LinkedIn profiles). The system has near-100% success rate across thousands of URLs tested.
+Behind the scenes it runs a deep waterfall with automatic failover: if one method is blocked, it instantly tries the next — racing parallel providers and picking the best result. Social media URLs get specialized extraction (full YouTube transcripts, Reddit threads with all comments, tweet content, LinkedIn profiles). The system has near-100% success rate across thousands of URLs tested.
 
 You should NEVER need to fetch a URL yourself or worry about being blocked. Just pass the URL and get back clean content. This tool handles: paywalls, bot detection, CAPTCHAs, JavaScript rendering, Cloudflare challenges, cookie walls, age gates, and geo-restrictions. If a URL exists on the public web, this tool will get its content.
 
 If the fetched content is missing, incomplete, or doesn't match what you expect from the page, retry the same URL with skip_providers set to the provider that failed (shown in source_provider). For example if Tavily returned a paywall page, retry with skip_providers: "tavily" to force the next provider in the waterfall.`,
 				annotations: {
-					title: 'URL Fetch (26-provider waterfall)',
+					title: 'URL Fetch (multi-provider waterfall)',
 					readOnlyHint: true,
 					destructiveHint: false,
 					idempotentHint: true,
