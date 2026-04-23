@@ -7,7 +7,7 @@
 
 > **Multi-provider search, AI answers, and universal URL fetching — aggregated, ranked, and cached at the edge.**
 
-Omnisearch MCP is a production-ready [Model Context Protocol](https://modelcontextprotocol.io/) server running on Cloudflare Workers with Durable Objects. It queries **9 web search engines** and **9 AI answer providers** in parallel, fetches content from **any URL** via a **26-provider waterfall**, and returns unified results with global KV caching.
+Omnisearch MCP is a production-ready [Model Context Protocol](https://modelcontextprotocol.io/) server running on Cloudflare Workers with Durable Objects. It queries many web search engines and AI answer providers in parallel, fetches content from **any URL** via a deep multi-provider waterfall, and returns unified results with global KV caching.
 
 ---
 
@@ -15,10 +15,10 @@ Omnisearch MCP is a production-ready [Model Context Protocol](https://modelconte
 
 | Feature | Single Provider | Omnisearch |
 |---------|----------------|------------|
-| **Resilience** | Single point of failure | 40+ providers with automatic failover |
-| **Search** | One engine's blind spots | 9 engines in parallel, RRF-ranked, cross-deduplicated |
-| **AI Answers** | One model's perspective | Consensus across 9 AI providers with citations |
-| **URL Fetching** | Blocked by paywalls, CAPTCHAs | 26-provider waterfall with social media extraction |
+| **Resilience** | Single point of failure | Many providers with automatic failover |
+| **Search** | One engine's blind spots | Multiple engines in parallel, RRF-ranked, cross-deduplicated |
+| **AI Answers** | One model's perspective | Consensus across multiple AI providers with citations |
+| **URL Fetching** | Blocked by paywalls, CAPTCHAs | Multi-provider waterfall with social media extraction |
 | **Performance** | Cold on every call | Global KV cache (36h TTL) — cache hits return in ~80ms |
 | **Connectivity** | Timeout on long operations | SSE keepalive with event-boundary buffering |
 
@@ -26,17 +26,17 @@ Omnisearch MCP is a production-ready [Model Context Protocol](https://modelconte
 
 ## Three Tools
 
-### `web_search` — 9-engine parallel search with RRF ranking
+### `web_search` — Parallel-fanout search with RRF ranking
 
-Fans out to Tavily, Brave, Kagi, Exa, Firecrawl, Perplexity, SerpAPI, Linkup, and You.com simultaneously. Deduplicates by URL, ranks using Reciprocal Rank Fusion, merges snippets with Jaccard-based sentence selection, and rescues high-quality results from underrepresented domains.
+Fans out to all configured search engines simultaneously. Deduplicates by URL, ranks using Reciprocal Rank Fusion, merges snippets with Jaccard-based sentence selection, and rescues high-quality results from underrepresented domains.
 
 ### `answer` — Consensus AI answers with citations
 
-Queries up to 9 AI providers in parallel (Perplexity, Kagi FastGPT, Exa, Brave Answer, Tavily, ChatGPT, Claude, Gemini, plus Gemini Grounded with web search context). Returns all answers so you can see where providers agree and where they diverge. 2-minute deadline with AbortController cancellation.
+Queries multiple AI providers in parallel — each independently searching the web and synthesizing its own answer with citations. Returns all answers so you can see where providers agree and where they diverge. 2-minute deadline with AbortController cancellation.
 
 ### `fetch` — Universal URL content extraction
 
-26-provider deep waterfall that gets clean content from any URL on the internet — paywalled articles, JavaScript SPAs, social media posts, PDFs. Domain breakers route specialized URLs first (YouTube to Supadata for transcripts, Reddit/LinkedIn/TikTok/Instagram to SociaVault for structured extraction), then walks a tiered waterfall of general-purpose fetchers with parallel racing and challenge-page detection.
+Deep waterfall that gets clean content from any URL on the internet — paywalled articles, JavaScript SPAs, social media posts, PDFs. Domain breakers route specialized URLs first (YouTube to Supadata for transcripts, Reddit/LinkedIn/TikTok/Instagram to SociaVault for structured extraction), then walks a tiered waterfall of general-purpose fetchers with parallel racing and challenge-page detection.
 
 ---
 
@@ -50,7 +50,7 @@ npm ci
 
 # 2. Set your API keys as Cloudflare secrets
 npx wrangler secret put TAVILY_API_KEY
-npx wrangler secret put BRAVE_API_KEY
+npx wrangler secret put FIRECRAWL_API_KEY
 # ... add as many providers as you want
 
 # 3. Deploy
@@ -78,7 +78,6 @@ Configure your MCP client:
 | Variable | Provider | Best For |
 |----------|----------|----------|
 | `TAVILY_API_KEY` | [Tavily](https://tavily.com) | Academic/research queries |
-| `BRAVE_API_KEY` | [Brave Search](https://brave.com/search/api/) | Privacy-focused, technical |
 | `KAGI_API_KEY` | [Kagi](https://kagi.com) | High-quality curated results |
 | `EXA_API_KEY` | [Exa](https://exa.ai) | AI-native neural search |
 | `SERPAPI_API_KEY` | [SerpAPI](https://serpapi.com) | Google results |
@@ -86,6 +85,7 @@ Configure your MCP client:
 | `FIRECRAWL_API_KEY` | [Firecrawl](https://firecrawl.dev) | Structured web data |
 | `YOU_API_KEY` | [You.com](https://you.com) | LLM-optimized snippets |
 | `PERPLEXITY_API_KEY` | [Perplexity](https://perplexity.ai) | AI-cited search |
+| `KIMI_API_KEY` | [Kimi](https://platform.kimi.com) | Coding-agent search (routed via Scrapfly) |
 
 ### AI Answer Providers (optional)
 
@@ -94,14 +94,13 @@ Configure your MCP client:
 | `PERPLEXITY_API_KEY` | Perplexity Sonar |
 | `KAGI_API_KEY` | Kagi FastGPT |
 | `EXA_API_KEY` | Exa Answer |
-| `BRAVE_ANSWER_API_KEY` | Brave Answer |
 | `TAVILY_API_KEY` | Tavily Answer |
 | `LLM_SEARCH_BASE_URL` + `LLM_SEARCH_API_KEY` | ChatGPT / Claude / Gemini via OpenAI-compatible endpoint |
 | `GEMINI_GROUNDED_API_KEY` | Gemini with URL context grounding |
 
-### Fetch Providers (optional, 26 available)
+### Fetch Providers (optional)
 
-The fetch waterfall includes: Tavily, Firecrawl, Linkup, Cloudflare Browser, Diffbot, Olostep, Scrapfly, Scrapedo, Decodo, Zyte, BrightData, Jina, Spider, You, Scrapeless, ScrapingBee, ScrapeGraphAI, Scrappey, ScrapingAnt, Oxylabs, ScraperAPI, LeadMagic, OpenGraph, Supadata (YouTube transcripts), and SociaVault (social media).
+The fetch waterfall includes a wide array of general-purpose fetchers (Tavily, Firecrawl, Linkup, Cloudflare Browser, Diffbot, Olostep, Scrapfly, Decodo, Jina, Spider, You, Scrapeless, ScrapingBee, Scrappey, ScrapingAnt, Oxylabs, LeadMagic, OpenGraph), specialized routers (Supadata for YouTube transcripts, SociaVault for social media, GitHub for github.com URLs), and Kimi (Moonshot AI's coding-agent fetch, routed via Scrapfly residential proxy).
 
 ### Social Media Extraction (via SociaVault)
 
@@ -144,7 +143,7 @@ curl -X POST https://your-worker.workers.dev/fetch \
 
 # Health
 curl https://your-worker.workers.dev/health
-# {"status":"ok","name":"omnisearch-mcp","version":"1.0.0","providers":40}
+# {"status":"ok","name":"omnisearch-mcp","version":"1.0.0","providers":39}
 ```
 
 ---
@@ -175,7 +174,6 @@ curl https://your-worker.workers.dev/health
                     │    ▼             ▼             ▼        │
                     │ Web Search   AI Answer    Fetch Race    │
                     │  Fanout       Fanout      Waterfall     │
-                    │ (9 engines)  (9 providers) (26 providers)│
                     │    │             │             │        │
                     │    ▼             ▼             ▼        │
                     │ RRF Rank    Deadline +     Domain       │
@@ -221,9 +219,9 @@ src/
 │   └── snippet_selector.ts      # Bigram Jaccard + greedy sentence merge
 ├── providers/
 │   ├── index.ts                 # Provider initialization with atomic swap
-│   ├── search/                  # 9 web search adapters
-│   ├── ai_response/             # 7 AI answer adapters (+ 3 LLM via OpenAI bridge)
-│   ├── fetch/                   # 26 URL fetch adapters
+│   ├── search/                  # Web search adapters
+│   ├── ai_response/             # AI answer adapters (+ ChatGPT/Claude/Gemini via OpenAI bridge)
+│   ├── fetch/                   # URL fetch adapters
 │   └── unified/                 # Dispatchers (web_search, ai_search, fetch)
 └── server/
     ├── tools.ts                 # MCP tool registration with Zod schemas
@@ -232,7 +230,8 @@ src/
     ├── answer_orchestrator.ts   # AI fanout with deadline + abort + KV cache
     ├── fetch_orchestrator.ts    # Waterfall with breakers + parallel racing + KV cache
     ├── rest_search.ts           # REST /search endpoint
-    └── rest_fetch.ts            # REST /fetch endpoint
+    ├── rest_fetch.ts            # REST /fetch endpoint
+    └── rest_researcher.ts       # REST /researcher endpoint (GPT-Researcher compat)
 ```
 
 ---
@@ -259,7 +258,7 @@ npm run deploy       # Deploy to Cloudflare Workers
 ```
 
 ```bash
-# Health check (shows provider count)
+# Health check
 curl http://localhost:8787/health
 
 # REST search
