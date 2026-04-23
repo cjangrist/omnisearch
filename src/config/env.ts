@@ -64,6 +64,11 @@ export const config = {
 			base_url: 'https://ydc-index.io/v1',
 			timeout: 20000,
 		},
+		kimi: {
+			api_key: undefined as string | undefined,
+			base_url: 'https://api.kimi.com',
+			timeout: 30000,
+		},
 	},
 	ai_response: {
 		perplexity: {
@@ -255,6 +260,11 @@ export const config = {
 			base_url: 'https://api.github.com',
 			timeout: 30000,
 		},
+		kimi: {
+			api_key: undefined as string | undefined,
+			base_url: 'https://api.kimi.com',
+			timeout: 60000,
+		},
 	},
 };
 
@@ -277,6 +287,7 @@ export const initialize_config = (env: Env) => {
 	config.search.serpapi.api_key = env.SERPAPI_API_KEY;
 	config.search.linkup.api_key = env.LINKUP_API_KEY;
 	config.search.you.api_key = env.YOU_API_KEY;
+	config.search.kimi.api_key = env.KIMI_API_KEY;
 
 	// AI response providers
 	config.ai_response.perplexity.api_key = env.PERPLEXITY_API_KEY;
@@ -354,6 +365,7 @@ export const initialize_config = (env: Env) => {
 	config.fetch.serpapi.api_key = env.SERPAPI_API_KEY;
 	config.fetch.supadata.api_key = env.SUPADATA_API_KEY;
 	config.fetch.github.api_key = env.GITHUB_API_KEY;
+	config.fetch.kimi.api_key = env.KIMI_API_KEY;
 
 	// Fetch retry/timeout tuning
 
