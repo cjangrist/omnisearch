@@ -35,6 +35,7 @@ import { CloudflareBrowserFetchProvider, registration as cloudflare_browser_reg 
 import { SerpapiFetchProvider, registration as serpapi_reg } from '../fetch/serpapi/index.js';
 import { SupadataFetchProvider, registration as supadata_reg } from '../fetch/supadata/index.js';
 import { GitHubFetchProvider, registration as github_reg } from '../fetch/github/index.js';
+import { KimiFetchProvider, registration as kimi_reg } from '../fetch/kimi/index.js';
 
 // ─── ADD ONE LINE HERE TO REGISTER A NEW FETCH PROVIDER ─────────────
 const PROVIDERS = [
@@ -65,6 +66,7 @@ const PROVIDERS = [
 	{ name: 'serpapi', ...serpapi_reg, factory: () => new SerpapiFetchProvider() },
 	{ name: 'supadata', ...supadata_reg, factory: () => new SupadataFetchProvider() },
 	{ name: 'github', ...github_reg, factory: () => new GitHubFetchProvider() },
+	{ name: 'kimi', ...kimi_reg, factory: () => new KimiFetchProvider() },
 ] as const;
 // ─────────────────────────────────────────────────────────────────────
 

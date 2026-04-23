@@ -56,6 +56,7 @@ export interface Env {
 
 	SUPADATA_API_KEY?: string;
 	GITHUB_API_KEY?: string;
+	KIMI_API_KEY?: string;
 
 	// REST auth
 	OPENWEBUI_API_KEY?: string;

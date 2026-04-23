@@ -79,6 +79,7 @@ const CONFIG = {
 	waterfall: [
 		{ solo: 'tavily' },
 		{ solo: 'firecrawl' },
+		{ solo: 'kimi' },
 		{ parallel: ['linkup', 'cloudflare_browser'] },
 		{ parallel: ['diffbot', 'olostep'] },
 		{ parallel: ['scrapfly', 'scrapedo', 'decodo'] },
