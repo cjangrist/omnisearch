@@ -13,7 +13,7 @@ import { TraceContext, get_active_trace, run_with_trace } from '../common/r2_tra
 
 const logger = loggers.aiResponse();
 
-const GLOBAL_TIMEOUT_MS = 120_000; // 2 min hard deadline for the entire fanout
+const GLOBAL_TIMEOUT_MS = 240_000; // 4 min hard deadline for the entire fanout
 const PROGRESS_INTERVAL_MS = 5_000;
 const KV_ANSWER_TTL_SECONDS = 129_600; // 36 hours
 
