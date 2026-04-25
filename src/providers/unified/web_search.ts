@@ -19,6 +19,7 @@ import { SerpApiSearchProvider, registration as serpapi_reg } from '../search/se
 import { TavilySearchProvider, registration as tavily_reg } from '../search/tavily/index.js';
 import { YouSearchProvider, registration as you_reg } from '../search/you/index.js';
 import { KimiSearchProvider, registration as kimi_reg } from '../search/kimi/index.js';
+import { ZAISearchProvider, registration as zai_reg } from '../search/zai/index.js';
 
 // ─── ADD ONE LINE HERE TO REGISTER A NEW SEARCH PROVIDER ────────────
 const PROVIDERS = [
@@ -32,6 +33,7 @@ const PROVIDERS = [
 	{ name: 'linkup', ...linkup_reg, factory: () => new LinkupSearchProvider() },
 	{ name: 'you', ...you_reg, factory: () => new YouSearchProvider() },
 	{ name: 'kimi', ...kimi_reg, factory: () => new KimiSearchProvider() },
+	{ name: 'zai', ...zai_reg, factory: () => new ZAISearchProvider() },
 ] as const;
 // ─────────────────────────────────────────────────────────────────────
 

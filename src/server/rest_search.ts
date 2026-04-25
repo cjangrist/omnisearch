@@ -1,7 +1,8 @@
 // REST search endpoint — lightweight alternative to the MCP tool
-// POST /search  { query: string, count?: number, raw?: boolean }
+// POST /search  { query: string, count?: number, raw?: boolean, provider?: string }
 // Returns [{ link, title, snippet }]
 // raw: true skips quality filtering (returns all results including low-quality ones)
+// provider: target a single provider (bypasses fanout) — useful for testing/isolating providers
 // Compatible with Open WebUI and any REST client.
 
 import { ProviderError } from '../common/types.js';
@@ -9,6 +10,7 @@ import { loggers } from '../common/logger.js';
 import { authenticate_rest_request, sanitize_for_log } from '../common/utils.js';
 import { get_web_search_provider } from './tools.js';
 import { run_web_search_fanout } from './web_search_fanout.js';
+import { get_active_search_providers, type WebSearchProvider } from '../providers/unified/web_search.js';
 import { OPENWEBUI_API_KEY, OMNISEARCH_API_KEY } from '../config/env.js';
 
 const logger = loggers.rest();
@@ -37,11 +39,13 @@ export async function handle_rest_search(
 	let query: string;
 	let count: number;
 	let raw: boolean;
+	let provider: string | undefined;
 	try {
-		const body = await request.json() as { query?: string; count?: number; raw?: boolean };
+		const body = await request.json() as { query?: string; count?: number; raw?: boolean; provider?: string };
 		query = body.query as string;
 		count = Math.min(100, Math.max(0, body.count ?? 0));
 		raw = body.raw === true;
+		provider = body.provider;
 	} catch (err) {
 		logger.warn('Invalid JSON body', {
 			op: 'request_validation',
@@ -79,11 +83,22 @@ export async function handle_rest_search(
 	}
 	query = query.trim();
 
+	if (provider) {
+		const valid_names = new Set(get_active_search_providers().map((p) => p.name));
+		if (!valid_names.has(provider)) {
+			return Response.json(
+				{ error: `Invalid provider: ${provider}. Valid: ${Array.from(valid_names).join(', ')}` },
+				{ status: 400 },
+			);
+		}
+	}
+
 	logger.info('Search request received', {
 		op: 'search_request',
 		query: sanitize_for_log(query),
 		requested_count: count,
 		raw_mode: raw,
+		provider: provider ?? 'auto (fanout)',
 	});
 
 	const web_provider = get_web_search_provider();
@@ -96,6 +111,39 @@ export async function handle_rest_search(
 			{ error: 'No search providers configured' },
 			{ status: 503 },
 		);
+	}
+
+	// Single-provider mode — bypass fanout, return raw results from one provider
+	if (provider) {
+		try {
+			const items = await web_provider.search({
+				provider: provider as WebSearchProvider,
+				query,
+				limit: count > 0 ? count : undefined,
+			});
+			const sorted = (count > 0 ? items.slice(0, count) : items).map((r) => ({
+				link: r.url,
+				title: r.title || '',
+				snippet: r.snippet || '',
+			}));
+			const duration = Date.now() - start_time;
+			logger.response('POST', '/search', 200, duration, {
+				result_count: sorted.length,
+				provider,
+			});
+			return Response.json(sorted);
+		} catch (err) {
+			const error_message = err instanceof Error ? err.message : String(err);
+			const duration = Date.now() - start_time;
+			logger.error('Single-provider search failed', {
+				op: 'single_provider_search', provider, error: error_message,
+			});
+			logger.response('POST', '/search', 502, duration, { provider });
+			return Response.json(
+				{ error: `Provider ${provider} failed: ${error_message}` },
+				{ status: 502 },
+			);
+		}
 	}
 
 	let result;

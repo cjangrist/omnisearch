@@ -69,6 +69,11 @@ export const config = {
 			base_url: 'https://api.kimi.com',
 			timeout: 30000,
 		},
+		zai: {
+			api_key: undefined as string | undefined,
+			base_url: 'https://api.z.ai/api/paas/v4',
+			timeout: 30000,
+		},
 	},
 	ai_response: {
 		perplexity: {
@@ -112,6 +117,12 @@ export const config = {
 			api_key: '' as string,
 			base_url: '',
 			model: 'gemini/search-fast',
+			timeout: 360000,
+		},
+		kimi: {
+			api_key: '' as string,
+			base_url: '',
+			model: 'kimi',
 			timeout: 360000,
 		},
 		gemini_grounded: {
@@ -288,6 +299,7 @@ export const initialize_config = (env: Env) => {
 	config.search.linkup.api_key = env.LINKUP_API_KEY;
 	config.search.you.api_key = env.YOU_API_KEY;
 	config.search.kimi.api_key = env.KIMI_API_KEY;
+	config.search.zai.api_key = env.ZAI_API_KEY;
 
 	// AI response providers
 	config.ai_response.perplexity.api_key = env.PERPLEXITY_API_KEY;
@@ -303,6 +315,8 @@ export const initialize_config = (env: Env) => {
 	config.ai_response.claude.api_key = '';
 	config.ai_response.gemini.base_url = '';
 	config.ai_response.gemini.api_key = '';
+	config.ai_response.kimi.base_url = '';
+	config.ai_response.kimi.api_key = '';
 	config.fetch.brightdata.zone = 'unblocker';
 
 	// LLM search providers (ChatGPT/Claude/Gemini via OpenAI-compatible endpoint)
@@ -311,9 +325,11 @@ export const initialize_config = (env: Env) => {
 		config.ai_response.chatgpt.base_url = env.LLM_SEARCH_BASE_URL;
 		config.ai_response.claude.base_url = env.LLM_SEARCH_BASE_URL;
 		config.ai_response.gemini.base_url = env.LLM_SEARCH_BASE_URL;
+		config.ai_response.kimi.base_url = env.LLM_SEARCH_BASE_URL;
 		config.ai_response.chatgpt.api_key = env.LLM_SEARCH_API_KEY;
 		config.ai_response.claude.api_key = env.LLM_SEARCH_API_KEY;
 		config.ai_response.gemini.api_key = env.LLM_SEARCH_API_KEY;
+		config.ai_response.kimi.api_key = env.LLM_SEARCH_API_KEY;
 	}
 	if (env.LLM_SEARCH_CHATGPT_MODEL) {
 		config.ai_response.chatgpt.model = env.LLM_SEARCH_CHATGPT_MODEL;
@@ -323,6 +339,9 @@ export const initialize_config = (env: Env) => {
 	}
 	if (env.LLM_SEARCH_GEMINI_MODEL) {
 		config.ai_response.gemini.model = env.LLM_SEARCH_GEMINI_MODEL;
+	}
+	if (env.LLM_SEARCH_KIMI_MODEL) {
+		config.ai_response.kimi.model = env.LLM_SEARCH_KIMI_MODEL;
 	}
 
 	// Gemini Grounded (native Gemini API with URL context)
@@ -377,11 +396,12 @@ export const validate_config = () => {
 	const all_keys: Array<[string, string | undefined]> = [
 		...Object.entries(config.search).map(([name, c]) => [`search.${name}`, c.api_key] as [string, string | undefined]),
 		...Object.entries(config.ai_response)
-			.filter(([name]) => !['chatgpt', 'claude', 'gemini', 'gemini_grounded'].includes(name))
+			.filter(([name]) => !['chatgpt', 'claude', 'gemini', 'kimi', 'gemini_grounded'].includes(name))
 			.map(([name, c]) => [`ai.${name}`, (c as { api_key?: string }).api_key] as [string, string | undefined]),
 		['ai.chatgpt', config.ai_response.chatgpt.base_url || undefined],
 		['ai.claude', config.ai_response.claude.base_url || undefined],
 		['ai.gemini', config.ai_response.gemini.base_url || undefined],
+		['ai.kimi', config.ai_response.kimi.base_url || undefined],
 		['ai.gemini_grounded', config.ai_response.gemini_grounded.api_key || undefined],
 		...Object.entries(config.fetch).map(([name, c]) => {
 			const cfg = c as { api_key?: string; username?: string; account_id?: string };
