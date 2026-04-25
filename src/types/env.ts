@@ -27,6 +27,7 @@ export interface Env {
 	LLM_SEARCH_CHATGPT_MODEL?: string;
 	LLM_SEARCH_CLAUDE_MODEL?: string;
 	LLM_SEARCH_GEMINI_MODEL?: string;
+	LLM_SEARCH_KIMI_MODEL?: string;
 
 	// Fetch-only provider API keys
 	JINA_API_KEY?: string;
