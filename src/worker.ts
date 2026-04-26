@@ -177,9 +177,6 @@ const inject_sse_keepalive = (original: Response): Response => {
 // against the class_name in wrangler.toml [[durable_objects.bindings]].
 
 export class OmnisearchMCP extends McpAgent<Env> {
-	// @ts-expect-error: agents bundles @modelcontextprotocol/sdk@1.26.0 while we use 1.27.1.
-	// TypeScript flags the private property mismatch as a type error, but at runtime
-	// wrangler (esbuild) bundles a single copy so the types are structurally identical.
 	server = new McpServer(
 		{ name: SERVER_NAME, version: SERVER_VERSION },
 		{
