@@ -361,10 +361,13 @@ async function handle_request(request: Request, env: Env, ctx: ExecutionContext,
 				const response = await mcp_handler.fetch(request, env, ctx);
 				const duration = Date.now() - start_time;
 				logger.response(request.method, url.pathname, response.status, duration, { request_id });
-				// H1 diagnostic: SSE keepalive wrapper disabled to determine whether the
-				// empty-envelope anomaly originates in our wrapper or upstream in agents@0.7.9.
-				// If empty envelopes disappear with this disabled, the bug is in inject_sse_keepalive.
-				// Re-enable after diagnosis. See docs/mcp-empty-payload-anomaly.md
+				if (
+					request.method === 'POST'
+					&& response.body
+					&& response.headers.get('content-type')?.includes('text/event-stream')
+				) {
+					return inject_sse_keepalive(response);
+				}
 				return response;
 			} catch (err) {
 				logger.error('MCP handler error', {
