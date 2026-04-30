@@ -315,6 +315,22 @@ export const parse_skip_providers = (raw: unknown): string[] => {
 	return stripped.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
 };
 
+// Intersect parsed skip names with currently-active providers.
+// Returns { valid: known names that will actually be skipped, unknown: typos/garbage }.
+// Callers should reject (REST 400 / MCP error) when unknown.length > 0 so a typo
+// like "tavly" doesn't silently flip has_skip_providers true and trigger
+// dual-fetch + cache bypass without actually skipping anything.
+export const validate_skip_providers = (parsed: string[]): { valid: string[]; unknown: string[] } => {
+	const known = new Set(get_active_fetch_providers().map((p) => p.name));
+	const valid: string[] = [];
+	const unknown: string[] = [];
+	for (const name of parsed) {
+		if (known.has(name)) valid.push(name);
+		else unknown.push(name);
+	}
+	return { valid, unknown };
+};
+
 // ── Main entry point ─────────────────────────────────────────────
 
 export const run_fetch_race = async (
@@ -331,8 +347,21 @@ export const run_fetch_race = async (
 		const attempted: string[] = [];
 		const failed: Array<{ provider: string; error: string; duration_ms: number }> = [];
 
+		// Defense-in-depth: drop any unknown names that slipped past callers.
+		// Callers (REST, MCP) should already have rejected requests with unknown
+		// names — this is the safety net. Compute has_skip_providers from the
+		// validated set so garbage-only inputs (e.g. "tavly") don't flip it true.
+		const skip_validated = validate_skip_providers(options?.skip_providers ?? []);
+		if (skip_validated.unknown.length > 0) {
+			logger.warn('Dropping unknown skip_providers names', {
+				op: 'skip_providers_validation',
+				unknown: skip_validated.unknown,
+			});
+		}
+		const effective_skip = skip_validated.valid;
+
 		// Check KV cache first (skip for explicit provider mode, skip_cache flag, or skip_providers)
-		const has_skip_providers = (options?.skip_providers?.length ?? 0) > 0;
+		const has_skip_providers = effective_skip.length > 0;
 		if (!options?.provider && !options?.skip_cache && !has_skip_providers) {
 			const cached = await get_fetch_cached(url);
 			if (cached) {
@@ -371,7 +400,7 @@ export const run_fetch_race = async (
 		// Auto waterfall mode
 		logger.info('Waterfall start', { op: 'waterfall_start', url: url.slice(0, 200) });
 
-		const skip_set = new Set(options?.skip_providers ?? []);
+		const skip_set = new Set(effective_skip);
 		const active = new Set(get_active_fetch_providers().map((p) => p.name).filter((n) => !skip_set.has(n)));
 		trace.set_active_providers(Array.from(active));
 		trace.record_decision('waterfall_start', { active_providers: Array.from(active), skipped_providers: Array.from(skip_set), url: url.slice(0, 200) });
