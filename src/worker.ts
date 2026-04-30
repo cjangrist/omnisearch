@@ -203,7 +203,11 @@ export class OmnisearchMCP extends McpAgent<Env> {
 		initialize_config(this.env);
 		validate_config();
 		initialize_providers();
-		register_tools(this.server);
+		// Pass the DO's ctx so MCP tool handlers can scope flush_background's
+		// waitUntil against this DO instance — without it, R2 trace writes
+		// from MCP-invoked tools are detached fire-and-forget promises that
+		// can be cancelled when the DO completes its current invocation.
+		register_tools(this.server, () => this.ctx);
 		setup_handlers(this.server);
 		logger.info('OmnisearchMCP agent initialized', { op: 'agent_init' });
 	}
