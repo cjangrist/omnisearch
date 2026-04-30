@@ -23,22 +23,46 @@ const logger = loggers.fetch();
 
 const KV_FETCH_TTL_SECONDS = 129_600; // 36 hours
 
+const is_valid_cached_fetch = (raw: unknown): raw is FetchRaceResult => {
+	if (!raw || typeof raw !== 'object') return false;
+	const r = raw as Record<string, unknown>;
+	if (typeof r.provider_used !== 'string') return false;
+	if (typeof r.total_duration_ms !== 'number') return false;
+	if (!Array.isArray(r.providers_attempted)) return false;
+	if (!r.providers_attempted.every((s) => typeof s === 'string')) return false;
+	if (!Array.isArray(r.providers_failed)) return false;
+	if (!r.providers_failed.every((f) =>
+		f && typeof f === 'object' &&
+		typeof (f as Record<string, unknown>).provider === 'string' &&
+		typeof (f as Record<string, unknown>).error === 'string' &&
+		typeof (f as Record<string, unknown>).duration_ms === 'number'
+	)) return false;
+	if (!r.result || typeof r.result !== 'object') return false;
+	const result = r.result as Record<string, unknown>;
+	if (typeof result.url !== 'string') return false;
+	if (typeof result.title !== 'string') return false;
+	if (typeof result.content !== 'string') return false;
+	// alternative_results is optional, but if present must be an array of correct shape
+	if (r.alternative_results !== undefined) {
+		if (!Array.isArray(r.alternative_results)) return false;
+		if (!r.alternative_results.every((a) =>
+			a && typeof a === 'object' &&
+			typeof (a as Record<string, unknown>).provider === 'string' &&
+			(a as Record<string, unknown>).result &&
+			typeof (a as Record<string, unknown>).result === 'object'
+		)) return false;
+	}
+	return true;
+};
+
 const get_fetch_cached = async (url: string): Promise<FetchRaceResult | undefined> => {
 	if (!kv_cache) return undefined;
 	try {
 		const key = await hash_key('fetch:', url);
 		const raw = await kv_cache.get(key, 'json') as unknown;
-		// Minimal shape check — protects against legacy / corrupted cache entries
-		// from causing downstream `undefined.foo` crashes.
-		if (
-			raw && typeof raw === 'object' &&
-			typeof (raw as Record<string, unknown>).provider_used === 'string' &&
-			(raw as Record<string, unknown>).result &&
-			typeof (raw as Record<string, unknown>).result === 'object'
-		) {
-			return raw as FetchRaceResult;
-		}
-		return undefined;
+		// Full shape validation — legacy / corrupted entries are silently
+		// treated as a miss so downstream code can't crash on undefined fields.
+		return is_valid_cached_fetch(raw) ? raw : undefined;
 	} catch {
 		return undefined;
 	}
