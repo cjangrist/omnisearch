@@ -18,18 +18,24 @@ export const get_active_trace = (): TraceContext | undefined => trace_store.getS
 export const run_with_trace = <R>(ctx: TraceContext, fn: () => R): R =>
 	trace_store.run(ctx, fn);
 
-// ── Per-request ExecutionContext store ───────────────────────────────────────
-// AsyncLocalStorage keeps the ctx scoped to the originating request — the
+// ── Per-request waitUntil-capable context store ─────────────────────────────
+// AsyncLocalStorage keeps the ctx scoped to the originating request. The
 // previous module-level singleton was overwritten by every concurrent request,
 // so a slow request's `flush_background` attached to a newer request's ctx
 // (or, if that newer ctx had already returned, was silently dropped).
+//
+// Worker-side ctx is `ExecutionContext`; DO-side ctx is `DurableObjectState`.
+// Both expose `.waitUntil(promise)` — type the store as the structural minimum
+// so MCP tool handlers running inside the DO can scope `this.ctx` here too.
 
-const ctx_store = new AsyncLocalStorage<ExecutionContext>();
+export type WaitUntilCapable = { waitUntil: (promise: Promise<unknown>) => void };
 
-export const run_with_execution_context = <R>(ctx: ExecutionContext, fn: () => R): R =>
+const ctx_store = new AsyncLocalStorage<WaitUntilCapable>();
+
+export const run_with_execution_context = <R>(ctx: WaitUntilCapable, fn: () => R): R =>
 	ctx_store.run(ctx, fn);
 
-const get_active_execution_context = (): ExecutionContext | undefined =>
+const get_active_execution_context = (): WaitUntilCapable | undefined =>
 	ctx_store.getStore();
 
 // ── R2 bucket reference (set once at startup; constant across requests) ──────

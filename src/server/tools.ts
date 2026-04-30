@@ -18,6 +18,16 @@ import { run_answer_fanout } from './answer_orchestrator.js';
 import { run_fetch_race, parse_skip_providers, validate_skip_providers } from './fetch_orchestrator.js';
 import { get_active_fetch_providers } from '../providers/unified/fetch.js';
 import { ErrorType, ProviderError } from '../common/types.js';
+import { run_with_execution_context, type WaitUntilCapable } from '../common/r2_trace.js';
+
+// Per-MCP-tool-call ctx scoping. The DO's `this.ctx` (DurableObjectState) is
+// passed at registration time via a getter so trace flush_background calls
+// inside tool handlers can attach R2 writes to the DO's waitUntil — without
+// this, MCP tool R2 traces are detached fire-and-forget promises that can be
+// cancelled when the DO completes its current invocation.
+type CtxGetter = () => WaitUntilCapable | undefined;
+
+const noop_ctx_getter: CtxGetter = () => undefined;
 
 // Populated by initialize_providers() with individual provider names (tavily, brave, etc.)
 export const active_providers = {
@@ -30,6 +40,7 @@ class ToolRegistry {
 	private web_search_provider?: UnifiedWebSearchProvider;
 	private ai_search_provider?: UnifiedAISearchProvider;
 	private fetch_provider?: UnifiedFetchProvider;
+	private get_ctx: CtxGetter = noop_ctx_getter;
 
 	get_web_search_provider() {
 		return this.web_search_provider;
@@ -57,7 +68,8 @@ class ToolRegistry {
 		this.fetch_provider = provider;
 	}
 
-	setup_tool_handlers(server: McpServer) {
+	setup_tool_handlers(server: McpServer, get_ctx: CtxGetter = noop_ctx_getter) {
+		this.get_ctx = get_ctx;
 		if (this.web_search_provider) {
 			this.register_web_search_tool(server, this.web_search_provider);
 		}
@@ -67,6 +79,13 @@ class ToolRegistry {
 		if (this.fetch_provider) {
 			this.register_fetch_tool(server, this.fetch_provider);
 		}
+	}
+
+	// Wraps a tool callback with per-call waitUntil-ctx scoping so flush_background
+	// attaches to the DO's ctx (instead of being a detached fire-and-forget).
+	private with_ctx_scope<R>(fn: () => Promise<R>): Promise<R> {
+		const ctx = this.get_ctx();
+		return ctx ? run_with_execution_context(ctx, fn) : fn();
 	}
 
 	private register_web_search_tool(server: McpServer, web_ref: UnifiedWebSearchProvider) {
@@ -103,7 +122,7 @@ class ToolRegistry {
 					})),
 				},
 			},
-			async ({ query, timeout_ms, include_snippets }) => run_with_request_id(crypto.randomUUID(), async () => {
+			async ({ query, timeout_ms, include_snippets }) => this.with_ctx_scope(() => run_with_request_id(crypto.randomUUID(), async () => {
 				try {
 					const result = await run_web_search_fanout(web_ref, query, {
 						timeout_ms,
@@ -112,7 +131,7 @@ class ToolRegistry {
 				} catch (error) {
 					return this.format_error(error as Error);
 				}
-			}),
+			})),
 		);
 	}
 
@@ -151,7 +170,7 @@ IMPORTANT: This tool fans out to many providers and can take up to 2 minutes to 
 					})),
 				},
 			},
-			async ({ query }) => run_with_request_id(crypto.randomUUID(), async () => {
+			async ({ query }) => this.with_ctx_scope(() => run_with_request_id(crypto.randomUUID(), async () => {
 				try {
 					const answer_result = await run_answer_fanout(ai_ref, web_ref, query);
 					if (!answer_result) {
@@ -175,7 +194,7 @@ IMPORTANT: This tool fans out to many providers and can take up to 2 minutes to 
 				} catch (error) {
 					return this.format_error(error as Error);
 				}
-			}),
+			})),
 		);
 	}
 
@@ -232,7 +251,7 @@ Note: setting skip_providers also (a) bypasses the 36-hour KV cache and (b) fetc
 						.describe('Additional results when skip_providers triggered a multi-provider fetch — primary result is the top-level fields, alternatives are listed here for comparison.'),
 				},
 			},
-			async ({ url, skip_providers: raw_skip }) => run_with_request_id(crypto.randomUUID(), async () => {
+			async ({ url, skip_providers: raw_skip }) => this.with_ctx_scope(() => run_with_request_id(crypto.randomUUID(), async () => {
 				try {
 					const skip_providers = parse_skip_providers(raw_skip);
 					if (skip_providers.length > 0) {
@@ -273,7 +292,7 @@ Note: setting skip_providers also (a) bypasses the 36-hour KV cache and (b) fetc
 				} catch (error) {
 					return this.format_error(error as Error);
 				}
-			}),
+			})),
 		);
 	}
 
@@ -318,7 +337,7 @@ const registry = new ToolRegistry();
 export const get_web_search_provider = () => registry.get_web_search_provider();
 export const get_fetch_provider = () => registry.get_fetch_provider();
 export const reset_registry = () => { registry.reset(); };
-export const register_tools = (server: McpServer) => { registry.setup_tool_handlers(server); };
+export const register_tools = (server: McpServer, get_ctx?: CtxGetter) => { registry.setup_tool_handlers(server, get_ctx); };
 export const register_web_search_provider = (provider: UnifiedWebSearchProvider) => { registry.register_web_search_provider(provider); };
 export const register_ai_search_provider = (provider: UnifiedAISearchProvider) => { registry.register_ai_search_provider(provider); };
 export const register_fetch_provider = (provider: UnifiedFetchProvider) => { registry.register_fetch_provider(provider); };
