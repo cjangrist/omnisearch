@@ -18,17 +18,26 @@ export const get_active_trace = (): TraceContext | undefined => trace_store.getS
 export const run_with_trace = <R>(ctx: TraceContext, fn: () => R): R =>
 	trace_store.run(ctx, fn);
 
-// ── Module-level references (set once per request in worker.ts) ──────────────
+// ── Per-request ExecutionContext store ───────────────────────────────────────
+// AsyncLocalStorage keeps the ctx scoped to the originating request — the
+// previous module-level singleton was overwritten by every concurrent request,
+// so a slow request's `flush_background` attached to a newer request's ctx
+// (or, if that newer ctx had already returned, was silently dropped).
+
+const ctx_store = new AsyncLocalStorage<ExecutionContext>();
+
+export const run_with_execution_context = <R>(ctx: ExecutionContext, fn: () => R): R =>
+	ctx_store.run(ctx, fn);
+
+const get_active_execution_context = (): ExecutionContext | undefined =>
+	ctx_store.getStore();
+
+// ── R2 bucket reference (set once at startup; constant across requests) ──────
 
 let _r2_bucket: R2Bucket | undefined;
-let _execution_context: ExecutionContext | undefined;
 
 export const set_trace_r2_bucket = (bucket: R2Bucket | undefined) => {
 	_r2_bucket = bucket;
-};
-
-export const set_trace_execution_context = (ctx: ExecutionContext) => {
-	_execution_context = ctx;
 };
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -157,8 +166,9 @@ export class TraceContext {
 
 		const write_promise = this._write_to_r2(final_result);
 
-		if (_execution_context) {
-			_execution_context.waitUntil(write_promise);
+		const ctx = get_active_execution_context();
+		if (ctx) {
+			ctx.waitUntil(write_promise);
 		}
 	}
 
