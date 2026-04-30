@@ -15,7 +15,9 @@ import type {
 } from '../providers/unified/fetch.js';
 import { run_web_search_fanout, truncate_web_results, type FanoutResult } from './web_search_fanout.js';
 import { run_answer_fanout } from './answer_orchestrator.js';
-import { run_fetch_race, parse_skip_providers } from './fetch_orchestrator.js';
+import { run_fetch_race, parse_skip_providers, validate_skip_providers } from './fetch_orchestrator.js';
+import { get_active_fetch_providers } from '../providers/unified/fetch.js';
+import { ErrorType, ProviderError } from '../common/types.js';
 
 // Populated by initialize_providers() with individual provider names (tavily, brave, etc.)
 export const active_providers = {
@@ -212,6 +214,17 @@ If the fetched content is missing, incomplete, or doesn't match what you expect 
 			async ({ url, skip_providers: raw_skip }) => run_with_request_id(crypto.randomUUID(), async () => {
 				try {
 					const skip_providers = parse_skip_providers(raw_skip);
+					if (skip_providers.length > 0) {
+						const { unknown } = validate_skip_providers(skip_providers);
+						if (unknown.length > 0) {
+							const valid_names = get_active_fetch_providers().map((p) => p.name);
+							throw new ProviderError(
+								ErrorType.INVALID_INPUT,
+								`Unknown skip_providers names: ${unknown.join(', ')}. Valid: ${valid_names.join(', ')}`,
+								'fetch',
+							);
+						}
+					}
 					const result = await run_fetch_race(fetch_ref, url, { skip_providers });
 					const response: Record<string, unknown> = {
 						url: result.result.url,

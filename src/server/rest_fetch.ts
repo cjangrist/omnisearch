@@ -7,7 +7,7 @@ import { ErrorType, ProviderError } from '../common/types.js';
 import { loggers } from '../common/logger.js';
 import { authenticate_rest_request, sanitize_for_log } from '../common/utils.js';
 import { get_fetch_provider } from './tools.js';
-import { run_fetch_race, parse_skip_providers } from './fetch_orchestrator.js';
+import { run_fetch_race, parse_skip_providers, validate_skip_providers } from './fetch_orchestrator.js';
 import { get_active_fetch_providers, type FetchProviderName } from '../providers/unified/fetch.js';
 import { OPENWEBUI_API_KEY, OMNISEARCH_API_KEY } from '../config/env.js';
 
@@ -63,6 +63,18 @@ export async function handle_rest_fetch(
 		if (!valid_names.has(provider)) {
 			return Response.json(
 				{ error: `Invalid provider: ${provider}. Valid: ${Array.from(valid_names).join(', ')}` },
+				{ status: 400 },
+			);
+		}
+	}
+
+	// Validate skip_providers — reject typos / unknown names.
+	if (skip_providers.length > 0) {
+		const { unknown } = validate_skip_providers(skip_providers);
+		if (unknown.length > 0) {
+			const valid_names = get_active_fetch_providers().map((p) => p.name);
+			return Response.json(
+				{ error: `Unknown skip_providers names: ${unknown.join(', ')}. Valid: ${valid_names.join(', ')}` },
 				{ status: 400 },
 			);
 		}
