@@ -13,7 +13,7 @@ import { handle_rest_search } from './server/rest_search.js';
 import { handle_rest_fetch } from './server/rest_fetch.js';
 import { handle_rest_researcher } from './server/rest_researcher.js';
 import { loggers, run_with_request_id } from './common/logger.js';
-import { set_trace_execution_context } from './common/r2_trace.js';
+import { run_with_execution_context } from './common/r2_trace.js';
 import type { Env } from './types/env.js';
 
 const logger = loggers.worker();
@@ -246,8 +246,13 @@ export default {
 		const start_time = Date.now();
 		const request_id = crypto.randomUUID();
 
-		set_trace_execution_context(ctx);
-		return run_with_request_id(request_id, () => handle_request(request, env, ctx, url, start_time, request_id));
+		// Scope ExecutionContext per-request via AsyncLocalStorage so flush_background
+		// always attaches to the originating request's ctx (no module-level race).
+		return run_with_execution_context(ctx, () =>
+			run_with_request_id(request_id, () =>
+				handle_request(request, env, ctx, url, start_time, request_id),
+			),
+		);
 	},
 } satisfies ExportedHandler<Env>;
 
