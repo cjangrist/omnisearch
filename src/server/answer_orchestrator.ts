@@ -311,14 +311,24 @@ export const run_answer_fanout = async (
 			providers_failed: result.providers_failed.length,
 		});
 
-		// Await KV write — prevents REST path from killing the promise after response is sent
-		if (kv_cache && result.answers.length > 0) {
+		// Await KV write — prevents REST path from killing the promise after response is sent.
+		// Only cache COMPLETE fanouts (no failed providers, no timed-out providers).
+		// A partial result with one transient kimi 524 would otherwise lock that one-provider-
+		// short answer in for 36 hours, preventing retry once the upstream recovers.
+		const is_complete_fanout = result.answers.length > 0 && result.providers_failed.length === 0;
+		if (kv_cache && is_complete_fanout) {
 			try {
 				const answer_write_key = await hash_key('answer:', query);
 				await kv_cache.put(answer_write_key, JSON.stringify(result), { expirationTtl: KV_ANSWER_TTL_SECONDS });
 			} catch (err) {
 				logger.warn('KV answer cache write failed', { op: 'kv_write_error', error: err instanceof Error ? err.message : String(err) });
 			}
+		} else if (kv_cache && result.answers.length > 0) {
+			logger.debug('Skipping answer cache write (partial fanout)', {
+				op: 'answer_cache_skip_partial',
+				succeeded: result.answers.length,
+				failed: result.providers_failed.length,
+			});
 		}
 
 		trace.flush_background(result);
