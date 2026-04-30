@@ -300,27 +300,57 @@ const build_result = (
 });
 
 // ── Skip-providers parser ───────────────────────────────────────
-// Accepts whatever the LLM sends: JSON array, comma string, bracketed
-// string, quoted variants, single string, null/undefined → string[].
-// Non-string array entries (numbers, objects, null, undefined, Symbol)
-// are dropped rather than coerced — the prior `String(v)` produced
-// "null", "undefined", "42", "[object Object]" which then survived
-// filter(Boolean) and silently flipped has_skip_providers true.
+// Accepts whatever the LLM sends:
+//   - native arrays of strings: ["tavily","firecrawl"]
+//   - JSON-encoded array strings: '["tavily","firecrawl"]' (parsed via JSON.parse)
+//   - comma-separated strings: "tavily, firecrawl"
+//   - single name strings: "tavily"
+//   - null / undefined / "null" / "undefined" → []
+// Non-string array entries are dropped, not stringified.
+// Falls back to regex strip-and-split when JSON.parse fails — handles
+// loosely-formatted bracketed strings like "[tavily,firecrawl]" or with
+// smart quotes from clipboard paste.
+
+const SMART_QUOTES_RE = /[‘’“”]/g;
+
+const normalize_str_entry = (s: string): string => s.trim().toLowerCase();
 
 export const parse_skip_providers = (raw: unknown): string[] => {
 	if (raw == null) return [];
 	if (Array.isArray(raw)) {
 		return raw
 			.filter((v): v is string => typeof v === 'string')
-			.map((v) => v.trim().toLowerCase())
+			.map(normalize_str_entry)
 			.filter(Boolean);
 	}
 	if (typeof raw !== 'string') return [];
 	const str = raw.trim();
 	if (!str) return [];
-	// Strip surrounding brackets and quotes: "[\"tavily\", \"firecrawl\"]" → tavily, firecrawl
-	const stripped = str.replace(/^\[|\]$/g, '').replace(/"/g, '').replace(/'/g, '');
-	return stripped.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+	// Literal "null" / "undefined" from a stringified null → empty skip set.
+	const lower = str.toLowerCase();
+	if (lower === 'null' || lower === 'undefined') return [];
+	// JSON-encoded array string: try real JSON.parse first so internal commas /
+	// escaped quotes don't get split by the regex fallback.
+	if (str.startsWith('[')) {
+		try {
+			const parsed: unknown = JSON.parse(str);
+			if (Array.isArray(parsed)) {
+				return parsed
+					.filter((v): v is string => typeof v === 'string')
+					.map(normalize_str_entry)
+					.filter(Boolean);
+			}
+		} catch {
+			// fall through to regex strip-and-split for malformed JSON
+		}
+	}
+	// Fallback: strip surrounding brackets / quotes (incl. smart quotes), then split on commas.
+	const stripped = str
+		.replace(SMART_QUOTES_RE, '')
+		.replace(/^\[|\]$/g, '')
+		.replace(/"/g, '')
+		.replace(/'/g, '');
+	return stripped.split(',').map(normalize_str_entry).filter(Boolean);
 };
 
 // Intersect parsed skip names with currently-active providers.
