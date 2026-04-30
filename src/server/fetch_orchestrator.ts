@@ -526,7 +526,17 @@ export const run_fetch_race = async (
 		// Breakers: domain-specific providers tried before the waterfall
 		for (const [breaker_name, breaker_config] of Object.entries(CONFIG.breakers)) {
 			if (winners.length >= target_count) break;
-			if (matches_breaker(url, breaker_config) && active.has(breaker_config.provider)) {
+			if (matches_breaker(url, breaker_config)) {
+				if (!active.has(breaker_config.provider)) {
+					// Domain matched but the breaker provider is in skip_set
+					// (or has no key). Record so trace makes the bypass visible.
+					trace.record_decision('breaker_skipped', {
+						breaker: breaker_name,
+						provider: breaker_config.provider,
+						reason: skip_set.has(breaker_config.provider) ? 'in_skip_set' : 'inactive',
+					});
+					continue;
+				}
 				trace.record_decision('breaker_match', { breaker: breaker_name, provider: breaker_config.provider });
 				logger.info('Breaker matched', {
 					op: 'breaker_match',
