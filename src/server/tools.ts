@@ -189,7 +189,9 @@ Behind the scenes it runs a deep waterfall with automatic failover: if one metho
 
 You should NEVER need to fetch a URL yourself or worry about being blocked. Just pass the URL and get back clean content. This tool handles: paywalls, bot detection, CAPTCHAs, JavaScript rendering, Cloudflare challenges, cookie walls, age gates, and geo-restrictions. If a URL exists on the public web, this tool will get its content.
 
-If the fetched content is missing, incomplete, or doesn't match what you expect from the page, retry the same URL with skip_providers set to the provider that failed (shown in source_provider). For example if Tavily returned a paywall page, retry with skip_providers: "tavily" to force the next provider in the waterfall.`,
+If the fetched content is missing, incomplete, or doesn't match what you expect from the page, retry the same URL with skip_providers set to the provider that failed (shown in source_provider). For example if Tavily returned a paywall page, retry with skip_providers: "tavily" to force the next provider in the waterfall.
+
+Note: setting skip_providers also (a) bypasses the 36-hour KV cache and (b) fetches from TWO providers and returns the second under alternative_results so you can compare. Expect ~2x latency and ~2x provider cost on a skip_providers retry — only use it when the first attempt was wrong.`,
 				annotations: {
 					title: 'URL Fetch (multi-provider waterfall)',
 					readOnlyHint: true,
@@ -200,7 +202,7 @@ If the fetched content is missing, incomplete, or doesn't match what you expect 
 				inputSchema: {
 					url: z.string().url().describe('The URL to fetch — any public URL works: articles, social media, products, docs, PDFs, SPAs, paywalled content'),
 					skip_providers: z.union([z.string(), z.array(z.string())]).optional()
-						.describe('Provider names to skip in the waterfall. Accepts a comma-separated string ("tavily,firecrawl") OR a JSON-encoded array string (\'["tavily","firecrawl"]\') OR a native array (["tavily","firecrawl"]). Use when a provider returned bad results and you want to retry without it.'),
+						.describe('Provider names to skip in the waterfall. Accepts a comma-separated string ("tavily,firecrawl") OR a JSON-encoded array string (\'["tavily","firecrawl"]\') OR a native array (["tavily","firecrawl"]). Setting this triggers a 2-provider compare (results returned under alternative_results), bypasses the cache, and roughly doubles cost+latency — only use when a prior fetch returned wrong content.'),
 				},
 				outputSchema: {
 					url: z.string(),
