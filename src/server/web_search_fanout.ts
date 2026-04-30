@@ -17,11 +17,40 @@ const KV_SEARCH_TTL_SECONDS = 129_600; // 36 hours
 const make_cache_key = (query: string, options?: { skip_quality_filter?: boolean }): Promise<string> =>
 	hash_key('search:', options?.skip_quality_filter ? `${query}\0sqf=true` : query);
 
+const is_valid_cached_fanout = (raw: unknown): raw is FanoutResult => {
+	if (!raw || typeof raw !== 'object') return false;
+	const r = raw as Record<string, unknown>;
+	if (typeof r.total_duration_ms !== 'number') return false;
+	if (!Array.isArray(r.providers_succeeded)) return false;
+	if (!r.providers_succeeded.every((p) =>
+		p && typeof p === 'object' &&
+		typeof (p as Record<string, unknown>).provider === 'string' &&
+		typeof (p as Record<string, unknown>).duration_ms === 'number'
+	)) return false;
+	if (!Array.isArray(r.providers_failed)) return false;
+	if (!r.providers_failed.every((f) =>
+		f && typeof f === 'object' &&
+		typeof (f as Record<string, unknown>).provider === 'string' &&
+		typeof (f as Record<string, unknown>).error === 'string' &&
+		typeof (f as Record<string, unknown>).duration_ms === 'number'
+	)) return false;
+	if (!Array.isArray(r.web_results)) return false;
+	if (!r.web_results.every((w) =>
+		w && typeof w === 'object' &&
+		typeof (w as Record<string, unknown>).title === 'string' &&
+		typeof (w as Record<string, unknown>).url === 'string' &&
+		Array.isArray((w as Record<string, unknown>).snippets) &&
+		Array.isArray((w as Record<string, unknown>).source_providers) &&
+		typeof (w as Record<string, unknown>).score === 'number'
+	)) return false;
+	return true;
+};
+
 const get_cached = async (key: string): Promise<FanoutResult | undefined> => {
 	if (!kv_cache) return undefined;
 	try {
-		const cached = await kv_cache.get(key, 'json');
-		return cached as FanoutResult | undefined;
+		const cached = await kv_cache.get(key, 'json') as unknown;
+		return is_valid_cached_fanout(cached) ? cached : undefined;
 	} catch {
 		return undefined;
 	}

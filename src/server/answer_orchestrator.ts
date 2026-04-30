@@ -45,6 +45,31 @@ export interface AnswerResult {
 	answers: AnswerEntry[];
 }
 
+const is_valid_cached_answer = (raw: unknown): raw is AnswerResult => {
+	if (!raw || typeof raw !== 'object') return false;
+	const r = raw as Record<string, unknown>;
+	if (typeof r.query !== 'string') return false;
+	if (typeof r.total_duration_ms !== 'number') return false;
+	if (!Array.isArray(r.providers_queried) || !r.providers_queried.every((p) => typeof p === 'string')) return false;
+	if (!Array.isArray(r.providers_succeeded) || !r.providers_succeeded.every((p) => typeof p === 'string')) return false;
+	if (!Array.isArray(r.providers_failed)) return false;
+	if (!r.providers_failed.every((f) =>
+		f && typeof f === 'object' &&
+		typeof (f as Record<string, unknown>).provider === 'string' &&
+		typeof (f as Record<string, unknown>).error === 'string' &&
+		typeof (f as Record<string, unknown>).duration_ms === 'number'
+	)) return false;
+	if (!Array.isArray(r.answers)) return false;
+	if (!r.answers.every((a) =>
+		a && typeof a === 'object' &&
+		typeof (a as Record<string, unknown>).source === 'string' &&
+		typeof (a as Record<string, unknown>).answer === 'string' &&
+		typeof (a as Record<string, unknown>).duration_ms === 'number' &&
+		Array.isArray((a as Record<string, unknown>).citations)
+	)) return false;
+	return true;
+};
+
 const build_answer_entry = (
 	provider_name: string,
 	items: SearchResult[],
@@ -249,7 +274,8 @@ export const run_answer_fanout = async (
 		if (kv_cache) {
 			try {
 				const answer_cache_key = await hash_key('answer:', query);
-				const cached = await kv_cache.get(answer_cache_key, 'json') as AnswerResult | null;
+				const raw = await kv_cache.get(answer_cache_key, 'json') as unknown;
+				const cached = is_valid_cached_answer(raw) ? raw : undefined;
 				if (cached) {
 					logger.debug('Returning cached answer result', { op: 'answer_cache_hit', query: query.slice(0, 100) });
 					trace.cache_hit = true;
