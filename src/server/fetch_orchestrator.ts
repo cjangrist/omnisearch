@@ -196,58 +196,73 @@ const run_solo = async (ctx: StepContext, provider: string): Promise<FetchResult
 const run_parallel = async (
 	ctx: StepContext,
 	providers: string[],
-): Promise<{ provider: string; result: FetchResult } | undefined> => {
+	target_count: number,
+): Promise<Array<{ provider: string; result: FetchResult }>> => {
 	const available = providers.filter((p) => ctx.active.has(p));
-	if (available.length === 0) return undefined;
+	if (available.length === 0) return [];
 
 	ctx.attempted.push(...available);
 	const trace = get_active_trace();
 
-	// Race providers — return the first success, cancel losers.
-	// resolved flag prevents loser .catch() from mutating ctx.failed after winner returns.
+	// Multi-winner race: collect successes up to `target_count`, settle when reached
+	// (or all providers complete). When target_count > 1 we want both/all alternatives,
+	// not just the first — Promise.any orphaned alternatives unnecessarily.
+	// resolved flag prevents loser .catch() from mutating ctx.failed after we return.
+	const winners: Array<{ provider: string; result: FetchResult }> = [];
 	let resolved = false;
+	let completed = 0;
 
-	const promises = available.map((p) => {
-		const t0 = Date.now();
-		trace?.record_provider_start(p, { url: ctx.url });
-		return try_provider(ctx.unified, ctx.url, p)
-			.then((r) => {
-				trace?.record_provider_complete(p, r, Date.now() - t0);
-				return { provider: p, result: r };
-			})
-			.catch((error) => {
-				const duration_ms = Date.now() - t0;
-				const error_msg = error instanceof Error ? error.message : String(error);
-				if (!resolved) {
-					ctx.failed.push({ provider: p, error: error_msg, duration_ms });
+	return new Promise<Array<{ provider: string; result: FetchResult }>>((resolve) => {
+		const try_settle = () => {
+			if (resolved) return;
+			if (winners.length >= target_count || completed >= available.length) {
+				resolved = true;
+				if (winners.length === 0) {
+					logger.debug('All parallel providers failed', {
+						op: 'parallel_all_failed',
+						providers: available,
+						url: ctx.url.slice(0, 200),
+					});
 				}
-				trace?.record_provider_error(p, error_msg, duration_ms);
-				throw error; // re-throw so Promise.any skips it
-			});
-	});
+				resolve([...winners]);
+			}
+		};
 
-	try {
-		const winner = await Promise.any(promises);
-		resolved = true;
-		return winner;
-	} catch {
-		// AggregateError — all providers failed (individual errors already in ctx.failed)
-		resolved = true;
-		logger.debug('All parallel providers failed', {
-			op: 'parallel_all_failed',
-			providers: available,
-			url: ctx.url.slice(0, 200),
-		});
-		return undefined;
-	}
+		for (const p of available) {
+			const t0 = Date.now();
+			trace?.record_provider_start(p, { url: ctx.url });
+			try_provider(ctx.unified, ctx.url, p)
+				.then((r) => {
+					trace?.record_provider_complete(p, r, Date.now() - t0);
+					if (!resolved && winners.length < target_count) {
+						winners.push({ provider: p, result: r });
+					}
+				})
+				.catch((error) => {
+					const duration_ms = Date.now() - t0;
+					const error_msg = error instanceof Error ? error.message : String(error);
+					if (!resolved) {
+						ctx.failed.push({ provider: p, error: error_msg, duration_ms });
+					}
+					trace?.record_provider_error(p, error_msg, duration_ms);
+				})
+				.finally(() => {
+					completed++;
+					try_settle();
+				});
+		}
+	});
 };
 
 const run_sequential = async (
 	ctx: StepContext,
 	providers: string[],
-): Promise<{ provider: string; result: FetchResult } | undefined> => {
+	target_count: number,
+): Promise<Array<{ provider: string; result: FetchResult }>> => {
 	const trace = get_active_trace();
+	const winners: Array<{ provider: string; result: FetchResult }> = [];
 	for (const provider of providers) {
+		if (winners.length >= target_count) break;
 		if (!ctx.active.has(provider)) continue;
 		ctx.attempted.push(provider);
 		const t0 = Date.now();
@@ -255,7 +270,7 @@ const run_sequential = async (
 		try {
 			const result = await try_provider(ctx.unified, ctx.url, provider);
 			trace?.record_provider_complete(provider, result, Date.now() - t0);
-			return { provider, result };
+			winners.push({ provider, result });
 		} catch (error) {
 			const duration_ms = Date.now() - t0;
 			const error_msg = error instanceof Error ? error.message : String(error);
@@ -263,24 +278,25 @@ const run_sequential = async (
 			trace?.record_provider_error(provider, error_msg, duration_ms);
 		}
 	}
-	return undefined;
+	return winners;
 };
 
 const execute_step = async (
 	ctx: StepContext,
 	step: WaterfallStep,
-): Promise<{ provider: string; result: FetchResult } | undefined> => {
+	target_count: number,
+): Promise<Array<{ provider: string; result: FetchResult }>> => {
 	if ('solo' in step) {
 		const result = await run_solo(ctx, step.solo);
-		return result ? { provider: step.solo, result } : undefined;
+		return result ? [{ provider: step.solo, result }] : [];
 	}
 	if ('parallel' in step) {
-		return run_parallel(ctx, step.parallel);
+		return run_parallel(ctx, step.parallel, target_count);
 	}
 	if ('sequential' in step) {
-		return run_sequential(ctx, step.sequential);
+		return run_sequential(ctx, step.sequential, target_count);
 	}
-	return undefined;
+	return [];
 };
 
 // ── Build result helper ──────────────────────────────────────────
@@ -505,9 +521,11 @@ export const run_fetch_race = async (
 			const step_label = 'solo' in step ? `solo:${step.solo}` : 'parallel' in step ? `parallel:${step.parallel.join(',')}` : `sequential:${(step as { sequential: string[] }).sequential.join(',')}`;
 			trace.record_decision('waterfall_step', { step: step_label });
 
-			const step_result = await execute_step(ctx, step);
-			if (step_result) {
-				winners.push(step_result);
+			const remaining = target_count - winners.length;
+			const step_winners = await execute_step(ctx, step, remaining);
+			for (const w of step_winners) {
+				winners.push(w);
+				if (winners.length >= target_count) break;
 			}
 		}
 
