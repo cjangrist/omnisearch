@@ -275,7 +275,11 @@ export const run_answer_fanout = async (
 			try {
 				const answer_cache_key = await hash_key('answer:', query);
 				const raw = await kv_cache.get(answer_cache_key, 'json') as unknown;
-				const cached = is_valid_cached_answer(raw) ? raw : undefined;
+				// Defense-in-depth: SHA-256 makes key collisions infeasible, but if a
+				// future bug ever wrote query A's result under query B's key, the
+				// echoed query mismatch turns "silent wrong answer" into "cache miss
+				// + fanout" with no correctness loss.
+				const cached = is_valid_cached_answer(raw) && raw.query === query ? raw : undefined;
 				if (cached) {
 					logger.debug('Returning cached answer result', { op: 'answer_cache_hit', query: query.slice(0, 100) });
 					trace.cache_hit = true;

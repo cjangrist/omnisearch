@@ -20,6 +20,7 @@ const make_cache_key = (query: string, options?: { skip_quality_filter?: boolean
 const is_valid_cached_fanout = (raw: unknown): raw is FanoutResult => {
 	if (!raw || typeof raw !== 'object') return false;
 	const r = raw as Record<string, unknown>;
+	if (typeof r.query !== 'string') return false;
 	if (typeof r.total_duration_ms !== 'number') return false;
 	if (!Array.isArray(r.providers_succeeded)) return false;
 	if (!r.providers_succeeded.every((p) =>
@@ -66,6 +67,7 @@ const set_cached = async (key: string, result: FanoutResult): Promise<void> => {
 };
 
 export interface FanoutResult {
+	query: string;
 	total_duration_ms: number;
 	providers_succeeded: Array<{ provider: string; duration_ms: number }>;
 	providers_failed: Array<{ provider: string; error: string; duration_ms: number }>;
@@ -224,9 +226,12 @@ export const run_web_search_fanout = async (
 	trace.request_environment = { query, skip_quality_filter: options?.skip_quality_filter, limit: options?.limit, timeout_ms: options?.timeout_ms };
 
 	return run_with_trace(trace, async () => {
-		// Return cached result if available (deduplicates gemini-grounded web search inside answer fanout)
+		// Return cached result if available (deduplicates gemini-grounded web search inside answer fanout).
+		// Defense-in-depth: also require cached.query === query so a SHA-256-collision-defying
+		// future bug couldn't silently serve a different query's results.
 		const cache_key = await make_cache_key(query, options);
-		const cached = await get_cached(cache_key);
+		const cached_raw = await get_cached(cache_key);
+		const cached = cached_raw && cached_raw.query === query ? cached_raw : undefined;
 		if (cached) {
 			logger.debug('Returning cached fanout result', { op: 'fanout_cache_hit', query: query.slice(0, 100) });
 			trace.cache_hit = true;
@@ -240,7 +245,7 @@ export const run_web_search_fanout = async (
 
 		if (active.length === 0) {
 			logger.warn('No search providers available', { op: 'fanout_check' });
-			const empty_result: FanoutResult = { total_duration_ms: 0, providers_succeeded: [], providers_failed: [], web_results: [] };
+			const empty_result: FanoutResult = { query, total_duration_ms: 0, providers_succeeded: [], providers_failed: [], web_results: [] };
 			trace.record_decision('no_providers_available', {});
 			trace.flush_background(empty_result);
 			return empty_result;
@@ -303,6 +308,7 @@ export const run_web_search_fanout = async (
 		});
 
 		const result: FanoutResult = {
+			query,
 			total_duration_ms: total_duration,
 			providers_succeeded,
 			providers_failed,
