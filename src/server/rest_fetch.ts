@@ -80,6 +80,17 @@ export async function handle_rest_fetch(
 		}
 	}
 
+	// Reject provider + skip_providers combined: they're contradictory.
+	// `provider` forces a specific provider (no waterfall); `skip_providers`
+	// only affects the waterfall. Honoring one silently dropped the other —
+	// surface the conflict instead.
+	if (provider && skip_providers.length > 0) {
+		return Response.json(
+			{ error: `Cannot combine 'provider' and 'skip_providers' — 'provider' bypasses the waterfall entirely so skip_providers has no effect. Use one or the other.` },
+			{ status: 400 },
+		);
+	}
+
 	logger.info('Fetch request received', {
 		op: 'fetch_request',
 		url: sanitize_for_log(url),
