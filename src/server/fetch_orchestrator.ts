@@ -207,7 +207,9 @@ const run_parallel = async (
 	// Multi-winner race: collect successes up to `target_count`, settle when reached
 	// (or all providers complete). When target_count > 1 we want both/all alternatives,
 	// not just the first — Promise.any orphaned alternatives unnecessarily.
-	// resolved flag prevents loser .catch() from mutating ctx.failed after we return.
+	// resolved flag suppresses BOTH ctx.failed mutations AND trace error events for
+	// losers that reject after we return — keeps the public response and the trace
+	// log telling the same story.
 	const winners: Array<{ provider: string; result: FetchResult }> = [];
 	let resolved = false;
 	let completed = 0;
@@ -233,17 +235,17 @@ const run_parallel = async (
 			trace?.record_provider_start(p, { url: ctx.url });
 			try_provider(ctx.unified, ctx.url, p)
 				.then((r) => {
+					if (resolved) return; // post-settle: discard, don't pollute trace
 					trace?.record_provider_complete(p, r, Date.now() - t0);
-					if (!resolved && winners.length < target_count) {
+					if (winners.length < target_count) {
 						winners.push({ provider: p, result: r });
 					}
 				})
 				.catch((error) => {
+					if (resolved) return; // post-settle: drop the loser's error from trace + ctx.failed
 					const duration_ms = Date.now() - t0;
 					const error_msg = error instanceof Error ? error.message : String(error);
-					if (!resolved) {
-						ctx.failed.push({ provider: p, error: error_msg, duration_ms });
-					}
+					ctx.failed.push({ provider: p, error: error_msg, duration_ms });
 					trace?.record_provider_error(p, error_msg, duration_ms);
 				})
 				.finally(() => {
