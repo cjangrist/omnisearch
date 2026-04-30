@@ -376,10 +376,15 @@ export const run_fetch_race = async (
 		trace.set_active_providers(Array.from(active));
 		trace.record_decision('waterfall_start', { active_providers: Array.from(active), skipped_providers: Array.from(skip_set), url: url.slice(0, 200) });
 
-		// Helper: build result and cache it for future requests
+		// Helper: build result and cache it for future requests.
+		// Skip the write when skip_providers is active — caller asked us to bypass
+		// specific providers, and the resulting shape (e.g. dual-fetch with
+		// alternative_results) would mislead future cache hits that did not.
 		const build_and_cache = async (provider: string, result: FetchResult): Promise<FetchRaceResult> => {
 			const race_result = build_result(start_time, provider, result, attempted, failed);
-			await set_fetch_cached(url, race_result);
+			if (!has_skip_providers) {
+				await set_fetch_cached(url, race_result);
+			}
 			return race_result;
 		};
 
