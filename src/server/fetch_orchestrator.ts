@@ -485,7 +485,18 @@ export const run_fetch_race = async (
 				provider,
 				url: url.slice(0, 200),
 			});
-			const result = await fetch_provider.fetch_url(url, provider);
+			let result: FetchResult;
+			try {
+				result = await fetch_provider.fetch_url(url, provider);
+			} catch (error) {
+				// fetch_url throws on auth / network / provider-side errors.
+				// Record on trace + flush before rethrowing so the trace reflects
+				// the failure (was bypassed by the bare-await pre-fix).
+				const error_msg = error instanceof Error ? error.message : String(error);
+				trace.record_provider_error(provider, error_msg, Date.now() - start_time);
+				trace.flush_background({ error: error_msg });
+				throw error;
+			}
 			if (is_fetch_failure(result, provider)) {
 				const error_msg = `${provider} returned blocked or empty content (${result.content?.length ?? 0} chars)`;
 				trace.record_provider_error(provider, error_msg, Date.now() - start_time);
