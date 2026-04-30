@@ -334,17 +334,24 @@ const build_result = (
 
 const SMART_QUOTES_RE = /[‘’“”]/g;
 
+const MAX_PARSER_INPUT_CHARS = 4096; // generous; real provider names are <30 chars
+const MAX_ARRAY_ENTRIES = 64;
+
 const normalize_str_entry = (s: string): string => s.trim().toLowerCase();
 
 export const parse_skip_providers = (raw: unknown): string[] => {
 	if (raw == null) return [];
 	if (Array.isArray(raw)) {
-		return raw
-			.filter((v): v is string => typeof v === 'string')
+		// Cap array length to prevent malicious clients from forcing N-quadratic
+		// work via a million-entry array.
+		const slice = raw.slice(0, MAX_ARRAY_ENTRIES);
+		return slice
+			.filter((v): v is string => typeof v === 'string' && v.length <= 200)
 			.map(normalize_str_entry)
 			.filter(Boolean);
 	}
 	if (typeof raw !== 'string') return [];
+	if (raw.length > MAX_PARSER_INPUT_CHARS) return [];
 	const str = raw.trim();
 	if (!str) return [];
 	// Literal "null" / "undefined" from a stringified null → empty skip set.
