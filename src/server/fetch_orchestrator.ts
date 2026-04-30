@@ -26,6 +26,7 @@ const KV_FETCH_TTL_SECONDS = 129_600; // 36 hours
 const is_valid_cached_fetch = (raw: unknown): raw is FetchRaceResult => {
 	if (!raw || typeof raw !== 'object') return false;
 	const r = raw as Record<string, unknown>;
+	if (typeof r.requested_url !== 'string') return false;
 	if (typeof r.provider_used !== 'string') return false;
 	if (typeof r.total_duration_ms !== 'number') return false;
 	if (!Array.isArray(r.providers_attempted)) return false;
@@ -62,7 +63,11 @@ const get_fetch_cached = async (url: string): Promise<FetchRaceResult | undefine
 		const raw = await kv_cache.get(key, 'json') as unknown;
 		// Full shape validation — legacy / corrupted entries are silently
 		// treated as a miss so downstream code can't crash on undefined fields.
-		return is_valid_cached_fetch(raw) ? raw : undefined;
+		// Defense-in-depth: also require requested_url === url so a future bug
+		// can't silently serve a different URL's content for this cache key.
+		if (!is_valid_cached_fetch(raw)) return undefined;
+		if (raw.requested_url !== url) return undefined;
+		return raw;
 	} catch {
 		return undefined;
 	}
@@ -144,6 +149,7 @@ const CONFIG = {
 // ── Types ────────────────────────────────────────────────────────
 
 export interface FetchRaceResult {
+	requested_url: string;
 	total_duration_ms: number;
 	provider_used: string;
 	providers_attempted: string[];
@@ -347,7 +353,9 @@ const build_result = (
 	result: FetchResult,
 	attempted: string[],
 	failed: Array<{ provider: string; error: string; duration_ms: number }>,
+	requested_url: string,
 ): FetchRaceResult => ({
+	requested_url,
 	total_duration_ms: Date.now() - start_time,
 	provider_used: provider,
 	providers_attempted: attempted,
@@ -504,7 +512,7 @@ export const run_fetch_race = async (
 				throw new ProviderError(ErrorType.PROVIDER_ERROR, error_msg, provider);
 			}
 			trace.record_provider_complete(provider, result, Date.now() - start_time);
-			const race_result = build_result(start_time, provider, result, attempted, failed);
+			const race_result = build_result(start_time, provider, result, attempted, failed, url);
 			trace.flush_background(race_result);
 			return race_result;
 		}
@@ -542,7 +550,7 @@ export const run_fetch_race = async (
 		// specific providers, and the resulting shape (e.g. dual-fetch with
 		// alternative_results) would mislead future cache hits that did not.
 		const build_and_cache = async (provider: string, result: FetchResult): Promise<FetchRaceResult> => {
-			const race_result = build_result(start_time, provider, result, attempted, failed);
+			const race_result = build_result(start_time, provider, result, attempted, failed, url);
 			if (!has_skip_providers) {
 				await set_fetch_cached(url, race_result);
 			}
