@@ -36,11 +36,20 @@ export const active_providers = {
 	fetch: new Set<string>(),
 };
 
+// Tool callbacks close over a per-DO get_ctx, NOT a singleton field — `registry`
+// is module-scoped and shared across DO instances in the same isolate, so any
+// per-DO ctx state on the registry would be overwritten by the most-recent
+// registration. Capturing get_ctx in each closure keeps every McpServer's
+// handlers bound to the DO that registered them.
+const with_ctx_scope = <R>(get_ctx: CtxGetter, fn: () => Promise<R>): Promise<R> => {
+	const ctx = get_ctx();
+	return ctx ? run_with_execution_context(ctx, fn) : fn();
+};
+
 class ToolRegistry {
 	private web_search_provider?: UnifiedWebSearchProvider;
 	private ai_search_provider?: UnifiedAISearchProvider;
 	private fetch_provider?: UnifiedFetchProvider;
-	private get_ctx: CtxGetter = noop_ctx_getter;
 
 	get_web_search_provider() {
 		return this.web_search_provider;
@@ -69,26 +78,18 @@ class ToolRegistry {
 	}
 
 	setup_tool_handlers(server: McpServer, get_ctx: CtxGetter = noop_ctx_getter) {
-		this.get_ctx = get_ctx;
 		if (this.web_search_provider) {
-			this.register_web_search_tool(server, this.web_search_provider);
+			this.register_web_search_tool(server, this.web_search_provider, get_ctx);
 		}
 		if (this.ai_search_provider) {
-			this.register_answer_tool(server, this.ai_search_provider, this.web_search_provider);
+			this.register_answer_tool(server, this.ai_search_provider, this.web_search_provider, get_ctx);
 		}
 		if (this.fetch_provider) {
-			this.register_fetch_tool(server, this.fetch_provider);
+			this.register_fetch_tool(server, this.fetch_provider, get_ctx);
 		}
 	}
 
-	// Wraps a tool callback with per-call waitUntil-ctx scoping so flush_background
-	// attaches to the DO's ctx (instead of being a detached fire-and-forget).
-	private with_ctx_scope<R>(fn: () => Promise<R>): Promise<R> {
-		const ctx = this.get_ctx();
-		return ctx ? run_with_execution_context(ctx, fn) : fn();
-	}
-
-	private register_web_search_tool(server: McpServer, web_ref: UnifiedWebSearchProvider) {
+	private register_web_search_tool(server: McpServer, web_ref: UnifiedWebSearchProvider, get_ctx: CtxGetter) {
 		server.registerTool(
 			'web_search',
 			{
@@ -122,7 +123,7 @@ class ToolRegistry {
 					})),
 				},
 			},
-			async ({ query, timeout_ms, include_snippets }) => this.with_ctx_scope(() => run_with_request_id(crypto.randomUUID(), async () => {
+			async ({ query, timeout_ms, include_snippets }) => with_ctx_scope(get_ctx, () => run_with_request_id(crypto.randomUUID(), async () => {
 				try {
 					const result = await run_web_search_fanout(web_ref, query, {
 						timeout_ms,
@@ -139,6 +140,7 @@ class ToolRegistry {
 		server: McpServer,
 		ai_ref: UnifiedAISearchProvider,
 		web_ref: UnifiedWebSearchProvider | undefined,
+		get_ctx: CtxGetter,
 	) {
 		server.registerTool(
 			'answer',
@@ -170,7 +172,7 @@ IMPORTANT: This tool fans out to many providers and can take up to 2 minutes to 
 					})),
 				},
 			},
-			async ({ query }) => this.with_ctx_scope(() => run_with_request_id(crypto.randomUUID(), async () => {
+			async ({ query }) => with_ctx_scope(get_ctx, () => run_with_request_id(crypto.randomUUID(), async () => {
 				try {
 					const answer_result = await run_answer_fanout(ai_ref, web_ref, query);
 					if (!answer_result) {
@@ -198,7 +200,7 @@ IMPORTANT: This tool fans out to many providers and can take up to 2 minutes to 
 		);
 	}
 
-	private register_fetch_tool(server: McpServer, fetch_ref: UnifiedFetchProvider) {
+	private register_fetch_tool(server: McpServer, fetch_ref: UnifiedFetchProvider, get_ctx: CtxGetter) {
 		server.registerTool(
 			'fetch',
 			{
@@ -251,7 +253,7 @@ Note: setting skip_providers also (a) bypasses the 36-hour KV cache and (b) fetc
 						.describe('Additional results when skip_providers triggered a multi-provider fetch — primary result is the top-level fields, alternatives are listed here for comparison.'),
 				},
 			},
-			async ({ url, skip_providers: raw_skip }) => this.with_ctx_scope(() => run_with_request_id(crypto.randomUUID(), async () => {
+			async ({ url, skip_providers: raw_skip }) => with_ctx_scope(get_ctx, () => run_with_request_id(crypto.randomUUID(), async () => {
 				try {
 					const skip_providers = parse_skip_providers(raw_skip);
 					if (skip_providers.length > 0) {
