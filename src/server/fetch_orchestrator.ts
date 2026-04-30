@@ -558,7 +558,7 @@ export const run_fetch_race = async (
 		// Waterfall: walk steps top-to-bottom
 		for (const step of CONFIG.waterfall) {
 			if (winners.length >= target_count) break;
-			const step_label = 'solo' in step ? `solo:${step.solo}` : 'parallel' in step ? `parallel:${step.parallel.join(',')}` : `sequential:${(step as { sequential: string[] }).sequential.join(',')}`;
+			const step_label = 'solo' in step ? `solo:${step.solo}` : 'parallel' in step ? `parallel:${step.parallel.join(',')}` : `sequential:${step.sequential.join(',')}`;
 			trace.record_decision('waterfall_step', { step: step_label });
 
 			const remaining = target_count - winners.length;
