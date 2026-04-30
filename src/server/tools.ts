@@ -201,7 +201,10 @@ Note: setting skip_providers also (a) bypasses the 36-hour KV cache and (b) fetc
 				},
 				inputSchema: {
 					url: z.string().url().describe('The URL to fetch — any public URL works: articles, social media, products, docs, PDFs, SPAs, paywalled content'),
-					skip_providers: z.union([z.string(), z.array(z.string())]).optional()
+					skip_providers: z.union([
+						z.string().max(2000),
+						z.array(z.string().max(200)).max(64),
+					]).optional()
 						.describe('Provider names to skip in the waterfall. Accepts a comma-separated string ("tavily,firecrawl") OR a JSON-encoded array string (\'["tavily","firecrawl"]\') OR a native array (["tavily","firecrawl"]). Setting this triggers a 2-provider compare (results returned under alternative_results), bypasses the cache, and roughly doubles cost+latency — only use when a prior fetch returned wrong content.'),
 				},
 				outputSchema: {
