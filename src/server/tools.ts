@@ -209,6 +209,22 @@ If the fetched content is missing, incomplete, or doesn't match what you expect 
 					source_provider: z.string(),
 					total_duration_ms: z.number(),
 					metadata: z.record(z.string(), z.unknown()).optional(),
+					providers_attempted: z.array(z.string()).optional()
+						.describe('Provider names tried during the waterfall, in attempt order.'),
+					providers_failed: z.array(z.object({
+						provider: z.string(),
+						error: z.string(),
+						duration_ms: z.number(),
+					})).optional()
+						.describe('Providers that failed during the waterfall, with error messages.'),
+					alternative_results: z.array(z.object({
+						url: z.string(),
+						title: z.string(),
+						content: z.string(),
+						source_provider: z.string(),
+						metadata: z.record(z.string(), z.unknown()).optional(),
+					})).optional()
+						.describe('Additional results when skip_providers triggered a multi-provider fetch — primary result is the top-level fields, alternatives are listed here for comparison.'),
 				},
 			},
 			async ({ url, skip_providers: raw_skip }) => run_with_request_id(crypto.randomUUID(), async () => {
@@ -233,6 +249,8 @@ If the fetched content is missing, incomplete, or doesn't match what you expect 
 						source_provider: result.provider_used,
 						total_duration_ms: result.total_duration_ms,
 						metadata: result.result.metadata,
+						providers_attempted: result.providers_attempted,
+						providers_failed: result.providers_failed,
 					};
 					if (result.alternative_results?.length) {
 						response.alternative_results = result.alternative_results.map((a) => ({
