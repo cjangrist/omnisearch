@@ -28,14 +28,15 @@ export async function handle_rest_fetch(
 	}
 
 	// Parse request body
-	let url: string;
+	let url = '';
 	let provider: string | undefined;
 	let skip_cache = false;
 	let skip_providers: string[] = [];
 	try {
-		const body = await request.json() as { url?: string; provider?: string; skip_cache?: boolean; skip_providers?: unknown };
-		url = body.url as string;
-		provider = body.provider;
+		const body = await request.json() as { url?: unknown; provider?: unknown; skip_cache?: unknown; skip_providers?: unknown };
+		// Validate later — type-narrow only what's safe to narrow now.
+		if (typeof body.url === 'string') url = body.url;
+		if (typeof body.provider === 'string') provider = body.provider;
 		skip_cache = body.skip_cache === true;
 		skip_providers = parse_skip_providers(body.skip_providers);
 	} catch {

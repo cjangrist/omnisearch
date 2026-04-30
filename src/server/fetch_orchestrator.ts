@@ -27,7 +27,18 @@ const get_fetch_cached = async (url: string): Promise<FetchRaceResult | undefine
 	if (!kv_cache) return undefined;
 	try {
 		const key = await hash_key('fetch:', url);
-		return await kv_cache.get(key, 'json') as FetchRaceResult | undefined;
+		const raw = await kv_cache.get(key, 'json') as unknown;
+		// Minimal shape check — protects against legacy / corrupted cache entries
+		// from causing downstream `undefined.foo` crashes.
+		if (
+			raw && typeof raw === 'object' &&
+			typeof (raw as Record<string, unknown>).provider_used === 'string' &&
+			(raw as Record<string, unknown>).result &&
+			typeof (raw as Record<string, unknown>).result === 'object'
+		) {
+			return raw as FetchRaceResult;
+		}
+		return undefined;
 	} catch {
 		return undefined;
 	}
