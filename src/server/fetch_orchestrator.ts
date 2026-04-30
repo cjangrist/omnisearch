@@ -490,7 +490,9 @@ export const run_fetch_race = async (
 
 		// When skip_providers is used we know the page is tricky — proactively
 		// fetch from TWO providers so the caller can compare results.
-		const target_count = has_skip_providers ? 2 : 1;
+		// Clamp to active.size so a heavily-skipped fanout (1 active provider
+		// left) doesn't iterate every empty step looking for a second winner.
+		const target_count = Math.min(has_skip_providers ? 2 : 1, active.size);
 		const winners: Array<{ provider: string; result: FetchResult }> = [];
 
 		// Breakers: domain-specific providers tried before the waterfall
