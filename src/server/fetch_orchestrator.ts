@@ -302,13 +302,21 @@ const build_result = (
 // ── Skip-providers parser ───────────────────────────────────────
 // Accepts whatever the LLM sends: JSON array, comma string, bracketed
 // string, quoted variants, single string, null/undefined → string[].
+// Non-string array entries (numbers, objects, null, undefined, Symbol)
+// are dropped rather than coerced — the prior `String(v)` produced
+// "null", "undefined", "42", "[object Object]" which then survived
+// filter(Boolean) and silently flipped has_skip_providers true.
 
 export const parse_skip_providers = (raw: unknown): string[] => {
 	if (raw == null) return [];
 	if (Array.isArray(raw)) {
-		return raw.map((v) => String(v).trim().toLowerCase()).filter(Boolean);
+		return raw
+			.filter((v): v is string => typeof v === 'string')
+			.map((v) => v.trim().toLowerCase())
+			.filter(Boolean);
 	}
-	const str = String(raw).trim();
+	if (typeof raw !== 'string') return [];
+	const str = raw.trim();
 	if (!str) return [];
 	// Strip surrounding brackets and quotes: "[\"tavily\", \"firecrawl\"]" → tavily, firecrawl
 	const stripped = str.replace(/^\[|\]$/g, '').replace(/"/g, '').replace(/'/g, '');
