@@ -454,12 +454,17 @@ export const run_fetch_race = async (
 		}
 
 		// Auto waterfall mode
-		logger.info('Waterfall start', { op: 'waterfall_start', url: url.slice(0, 200) });
-
 		const skip_set = new Set(effective_skip);
 		const active = new Set(get_active_fetch_providers().map((p) => p.name).filter((n) => !skip_set.has(n)));
 		trace.set_active_providers(Array.from(active));
 		trace.record_decision('waterfall_start', { active_providers: Array.from(active), skipped_providers: Array.from(skip_set), url: url.slice(0, 200) });
+
+		logger.info('Waterfall start', {
+			op: 'waterfall_start',
+			url: url.slice(0, 200),
+			skip_providers: Array.from(skip_set),
+			active_count: active.size,
+		});
 
 		// Empty active set: either the caller skipped every active provider, or
 		// no provider has API keys configured. Throw INVALID_INPUT (REST → 400)
