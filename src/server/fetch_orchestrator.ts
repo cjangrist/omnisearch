@@ -125,10 +125,13 @@ export interface FetchRaceResult {
 const API_NATIVE_PROVIDERS = new Set(['github', 'supadata']);
 
 const is_fetch_failure = (result: FetchResult, provider?: string): boolean => {
-	if (!result.content || result.content.length < CONFIG.failure.min_content_chars) {
-		return true;
-	}
+	if (!result.content) return true; // null/empty content is always a failure
+	// API-native providers (github gists, supadata transcripts) may return
+	// genuinely short payloads. Bypass the length + challenge-pattern checks
+	// for them BEFORE rejecting on length, so a 50-char gist isn't flagged
+	// as "blocked or empty".
 	if (provider && API_NATIVE_PROVIDERS.has(provider)) return false;
+	if (result.content.length < CONFIG.failure.min_content_chars) return true;
 	const lower = result.content.toLowerCase();
 	return CONFIG.failure.challenge_patterns.some((p) => lower.includes(p.toLowerCase()));
 };
