@@ -443,6 +443,21 @@ export const run_fetch_race = async (
 		trace.set_active_providers(Array.from(active));
 		trace.record_decision('waterfall_start', { active_providers: Array.from(active), skipped_providers: Array.from(skip_set), url: url.slice(0, 200) });
 
+		// Empty active set: either the caller skipped every active provider, or
+		// no provider has API keys configured. Throw INVALID_INPUT (REST → 400)
+		// rather than running the waterfall to exhaustion and emitting the
+		// misleading "All providers failed. Tried: <empty>" message that maps
+		// to 502.
+		if (active.size === 0) {
+			const reason = skip_set.size > 0
+				? `all candidates skipped via skip_providers (${Array.from(skip_set).join(', ')})`
+				: 'no providers configured with API keys';
+			const error_msg = `No fetch providers available — ${reason}`;
+			trace.record_decision('empty_active_set', { skipped_providers: Array.from(skip_set) });
+			trace.flush_background({ error: error_msg });
+			throw new ProviderError(ErrorType.INVALID_INPUT, error_msg, 'waterfall');
+		}
+
 		// Helper: build result and cache it for future requests.
 		// Skip the write when skip_providers is active — caller asked us to bypass
 		// specific providers, and the resulting shape (e.g. dual-fetch with
