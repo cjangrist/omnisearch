@@ -199,8 +199,8 @@ If the fetched content is missing, incomplete, or doesn't match what you expect 
 				},
 				inputSchema: {
 					url: z.string().url().describe('The URL to fetch — any public URL works: articles, social media, products, docs, PDFs, SPAs, paywalled content'),
-					skip_providers: z.string().optional()
-						.describe('Comma-separated provider names to skip in the waterfall (e.g. "tavily,firecrawl"). Use when a provider returned bad results and you want to retry without it.'),
+					skip_providers: z.union([z.string(), z.array(z.string())]).optional()
+						.describe('Provider names to skip in the waterfall. Accepts a comma-separated string ("tavily,firecrawl") OR a JSON-encoded array string (\'["tavily","firecrawl"]\') OR a native array (["tavily","firecrawl"]). Use when a provider returned bad results and you want to retry without it.'),
 				},
 				outputSchema: {
 					url: z.string(),
