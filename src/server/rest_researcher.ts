@@ -65,6 +65,23 @@ export async function handle_rest_researcher(
 	let output: Array<{ href: string; body: string }>;
 	try {
 		const fanout = await run_web_search_fanout(web_provider, query);
+		// Mirror /search: if every provider failed, return 502 with the failure
+		// list rather than 200 with an empty body. An empty body is a successful
+		// result of "we searched but found nothing"; an all-failed fanout is a
+		// server-side failure that the caller should retry.
+		if (fanout.providers_succeeded.length === 0 && fanout.providers_failed.length > 0) {
+			const duration = Date.now() - start_time;
+			logger.error('All search providers failed', {
+				op: 'researcher_all_failed',
+				failed_providers: fanout.providers_failed.map((f) => f.provider),
+				duration_ms: duration,
+			});
+			logger.response(request.method, '/researcher', 502, duration, { failed_count: fanout.providers_failed.length });
+			return Response.json(
+				{ error: 'All search providers failed', failed_providers: fanout.providers_failed.map((f) => f.provider) },
+				{ status: 502 },
+			);
+		}
 		output = fanout.web_results
 			.slice(0, DEFAULT_MAX_RESULTS)
 			.map((r) => ({
