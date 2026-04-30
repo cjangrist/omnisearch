@@ -152,6 +152,16 @@ const dispatch_to_providers = async (
 				failed: providers_failed.length,
 				pending: pending.map((p) => p.name),
 			});
+			// Mark pending as failed — without this, providers_failed underreports the
+			// real fanout state and downstream cache-gating would write a partial result.
+			const deadline_duration = timeout_ms;
+			for (const p of pending) {
+				providers_failed.push({
+					provider: p.name,
+					error: `Timed out (fanout deadline ${timeout_ms}ms)`,
+					duration_ms: deadline_duration,
+				});
+			}
 		}
 
 		// Snapshot results at deadline to prevent post-deadline mutations from in-flight promises
@@ -270,9 +280,19 @@ export const run_web_search_fanout = async (
 			web_results,
 		};
 
-		// Only cache successful results — don't pin transient failures for 24h
-		if (providers_succeeded.length > 0) {
+		// Only cache COMPLETE fanouts (every active provider settled successfully).
+		// Otherwise a partial — including timeout-limited internal calls from
+		// gemini-grounded — would poison the shared cache key with a one-provider
+		// result that subsequent unconstrained /search calls would receive for 36h.
+		const is_complete_fanout = providers_succeeded.length > 0 && providers_failed.length === 0;
+		if (is_complete_fanout) {
 			await set_cached(cache_key, result);
+		} else if (providers_succeeded.length > 0) {
+			logger.debug('Skipping search cache write (partial fanout)', {
+				op: 'search_cache_skip_partial',
+				succeeded: providers_succeeded.length,
+				failed: providers_failed.length,
+			});
 		}
 
 		trace.flush_background(result);
