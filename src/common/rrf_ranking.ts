@@ -25,12 +25,15 @@ const normalize_url = (raw: string): string => {
 	}
 };
 
+export type SnippetSource = 'aggregated' | 'grounded' | 'fallback';
+
 export interface RankedWebResult {
 	title: string;
 	url: string;
 	snippets: string[];
 	source_providers: string[];
 	score: number;
+	snippet_source?: SnippetSource;
 }
 
 interface TruncationInfo {

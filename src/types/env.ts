@@ -21,6 +21,9 @@ export interface Env {
 	GEMINI_GROUNDED_API_KEY?: string;
 	GEMINI_GROUNDED_MODEL?: string;
 
+	// Groq (snippet grounding for web_search via openai/gpt-oss-20b)
+	GROQ_API_KEY?: string;
+
 	// LLM search (ChatGPT/Claude/Gemini via OpenAI-compatible endpoint)
 	LLM_SEARCH_BASE_URL?: string;
 	LLM_SEARCH_API_KEY?: string;
