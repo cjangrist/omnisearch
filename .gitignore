@@ -141,3 +141,8 @@ vite.config.ts.timestamp-*
 temp/
 tmp/
 trash/
+
+# Python helper script caches (tools/)
+tools/__pycache__/
+tools/*.pyc
+

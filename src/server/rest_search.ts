@@ -7,7 +7,7 @@
 import { ProviderError } from '../common/types.js';
 import { loggers } from '../common/logger.js';
 import { authenticate_rest_request, sanitize_for_log } from '../common/utils.js';
-import { get_web_search_provider } from './tools.js';
+import { get_web_search_provider, get_fetch_provider } from './tools.js';
 import { run_web_search_fanout } from './web_search_fanout.js';
 import { OPENWEBUI_API_KEY, OMNISEARCH_API_KEY } from '../config/env.js';
 
@@ -37,11 +37,13 @@ export async function handle_rest_search(
 	let query: string;
 	let count: number;
 	let raw: boolean;
+	let grounded_snippets: boolean | undefined;
 	try {
-		const body = await request.json() as { query?: string; count?: number; raw?: boolean };
+		const body = await request.json() as { query?: string; count?: number; raw?: boolean; grounded_snippets?: boolean };
 		query = body.query as string;
 		count = Math.min(100, Math.max(0, body.count ?? 0));
 		raw = body.raw === true;
+		grounded_snippets = typeof body.grounded_snippets === 'boolean' ? body.grounded_snippets : undefined;
 	} catch (err) {
 		logger.warn('Invalid JSON body', {
 			op: 'request_validation',
@@ -84,6 +86,7 @@ export async function handle_rest_search(
 		query: sanitize_for_log(query),
 		requested_count: count,
 		raw_mode: raw,
+		grounded_snippets,
 	});
 
 	const web_provider = get_web_search_provider();
@@ -106,7 +109,11 @@ export async function handle_rest_search(
 	});
 
 	try {
-		result = await run_web_search_fanout(web_provider, query, { skip_quality_filter: raw });
+		result = await run_web_search_fanout(web_provider, query, {
+			skip_quality_filter: raw,
+			grounded_snippets,
+			fetch_provider: get_fetch_provider(),
+		});
 	} catch (err) {
 		const error_message = err instanceof Error ? err.message : String(err);
 		logger.error('Search fanout failed', {

@@ -3,19 +3,26 @@
 
 import type { SearchResult } from '../common/types.js';
 import { loggers } from '../common/logger.js';
-import { rank_and_merge, truncate_web_results, type RankedWebResult } from '../common/rrf_ranking.js';
+import { rank_and_merge, truncate_web_results, type RankedWebResult, type SnippetSource } from '../common/rrf_ranking.js';
 import { retry_with_backoff, hash_key } from '../common/utils.js';
 import { get_active_search_providers, type WebSearchProvider } from '../providers/unified/web_search.js';
-import { kv_cache } from '../config/env.js';
+import type { UnifiedFetchProvider } from '../providers/unified/fetch.js';
+import { config, kv_cache } from '../config/env.js';
 import { TraceContext, get_active_trace, run_with_trace } from '../common/r2_trace.js';
+import { ground_top_results } from './grounded_snippets.js';
 
 const logger = loggers.search();
 
 const DEFAULT_TOP_N = 15;
+const GROUNDING_TOP_N = 15;
 const KV_SEARCH_TTL_SECONDS = 129_600; // 36 hours
+const VALID_SNIPPET_SOURCES: ReadonlySet<SnippetSource> = new Set<SnippetSource>(['aggregated', 'grounded', 'fallback']);
 
-const make_cache_key = (query: string, options?: { skip_quality_filter?: boolean }): Promise<string> =>
-	hash_key('search:', options?.skip_quality_filter ? `${query}\0sqf=true` : query);
+const make_cache_key = (query: string, options?: { skip_quality_filter?: boolean; grounded?: boolean }): Promise<string> => {
+	const sqf_suffix = options?.skip_quality_filter ? '\0sqf=true' : '';
+	const grounded_suffix = options?.grounded ? '\0gnd=true' : '';
+	return hash_key('search:', `${query}${sqf_suffix}${grounded_suffix}`);
+};
 
 const is_valid_cached_fanout = (raw: unknown): raw is FanoutResult => {
 	if (!raw || typeof raw !== 'object') return false;
@@ -36,14 +43,18 @@ const is_valid_cached_fanout = (raw: unknown): raw is FanoutResult => {
 		typeof (f as Record<string, unknown>).duration_ms === 'number'
 	)) return false;
 	if (!Array.isArray(r.web_results)) return false;
-	if (!r.web_results.every((w) =>
-		w && typeof w === 'object' &&
-		typeof (w as Record<string, unknown>).title === 'string' &&
-		typeof (w as Record<string, unknown>).url === 'string' &&
-		Array.isArray((w as Record<string, unknown>).snippets) &&
-		Array.isArray((w as Record<string, unknown>).source_providers) &&
-		typeof (w as Record<string, unknown>).score === 'number'
-	)) return false;
+	if (!r.web_results.every((w) => {
+		if (!w || typeof w !== 'object') return false;
+		const rec = w as Record<string, unknown>;
+		if (typeof rec.title !== 'string') return false;
+		if (typeof rec.url !== 'string') return false;
+		if (!Array.isArray(rec.snippets)) return false;
+		if (!Array.isArray(rec.source_providers)) return false;
+		if (typeof rec.score !== 'number') return false;
+		if (rec.snippet_source !== undefined &&
+			!(typeof rec.snippet_source === 'string' && VALID_SNIPPET_SOURCES.has(rec.snippet_source as SnippetSource))) return false;
+		return true;
+	})) return false;
 	return true;
 };
 
@@ -217,25 +228,41 @@ const dispatch_to_providers = async (
 export const run_web_search_fanout = async (
 	web_provider: SearchDispatcher,
 	query: string,
-	options?: { skip_quality_filter?: boolean; limit?: number; timeout_ms?: number; signal?: AbortSignal },
+	options?: {
+		skip_quality_filter?: boolean;
+		limit?: number;
+		timeout_ms?: number;
+		signal?: AbortSignal;
+		grounded_snippets?: boolean;
+		fetch_provider?: UnifiedFetchProvider;
+	},
 ): Promise<FanoutResult> => {
+	const want_grounding = options?.grounded_snippets !== false
+		&& !!config.snippet_grounding.groq.api_key
+		&& !!options?.fetch_provider;
 	const trace = new TraceContext(crypto.randomUUID(), 'web_search');
 	const parent = get_active_trace();
 	if (parent) trace.parent_trace_id = parent.trace_id;
 	trace.set_strategy('parallel_fanout');
-	trace.request_environment = { query, skip_quality_filter: options?.skip_quality_filter, limit: options?.limit, timeout_ms: options?.timeout_ms };
+	trace.request_environment = {
+		query,
+		skip_quality_filter: options?.skip_quality_filter,
+		limit: options?.limit,
+		timeout_ms: options?.timeout_ms,
+		grounded_snippets: want_grounding,
+	};
 
 	return run_with_trace(trace, async () => {
 		// Return cached result if available (deduplicates gemini-grounded web search inside answer fanout).
 		// Defense-in-depth: also require cached.query === query so a SHA-256-collision-defying
 		// future bug couldn't silently serve a different query's results.
-		const cache_key = await make_cache_key(query, options);
+		const cache_key = await make_cache_key(query, { skip_quality_filter: options?.skip_quality_filter, grounded: want_grounding });
 		const cached_raw = await get_cached(cache_key);
 		const cached = cached_raw && cached_raw.query === query ? cached_raw : undefined;
 		if (cached) {
-			logger.debug('Returning cached fanout result', { op: 'fanout_cache_hit', query: query.slice(0, 100) });
+			logger.debug('Returning cached fanout result', { op: 'fanout_cache_hit', query: query.slice(0, 100), grounded: want_grounding });
 			trace.cache_hit = true;
-			trace.record_decision('cache_hit', { query: query.slice(0, 100) });
+			trace.record_decision('cache_hit', { query: query.slice(0, 100), grounded: want_grounding });
 			trace.flush_background(cached);
 			return cached;
 		}
@@ -287,14 +314,36 @@ export const run_web_search_fanout = async (
 			),
 		});
 
-		const web_results = rank_and_merge(results_by_provider, query, options?.skip_quality_filter);
-
-		const total_duration = Date.now() - fanout_start;
+		const ranked_results = rank_and_merge(results_by_provider, query, options?.skip_quality_filter);
 
 		trace.record_decision('ranking_complete', {
-			total_results: web_results.length,
-			total_duration_ms: total_duration,
+			total_results: ranked_results.length,
 		});
+
+		// Grounding: after RRF + dedup + tail rescue + quality filter, fetch the
+		// top-N URLs in parallel and use Groq (openai/gpt-oss-20b) to extract
+		// query-grounded snippets from the actual page content. Failures fall
+		// back to the original aggregated snippet so a single bad URL never
+		// breaks the result set. Gated on want_grounding (default true when
+		// GROQ_API_KEY is set and a fetch_provider was threaded through).
+		let web_results = ranked_results;
+		if (want_grounding && options?.fetch_provider && ranked_results.length > 0) {
+			const { results: top, truncation } = truncate_web_results(ranked_results, GROUNDING_TOP_N);
+			trace.record_decision('grounding_start', { top_n: top.length, truncation });
+			const grounding_t0 = Date.now();
+			const grounded_top = await ground_top_results(query, top, options.fetch_provider, options.signal);
+			const grounded_urls = new Set(grounded_top.map((r) => r.url));
+			const ungrounded_remainder = ranked_results.filter((r) => !grounded_urls.has(r.url));
+			web_results = [...grounded_top, ...ungrounded_remainder];
+			trace.record_decision('grounding_complete', {
+				duration_ms: Date.now() - grounding_t0,
+				grounded: grounded_top.filter((r) => r.snippet_source === 'grounded').length,
+				fallback: grounded_top.filter((r) => r.snippet_source === 'fallback').length,
+				total: grounded_top.length,
+			});
+		}
+
+		const total_duration = Date.now() - fanout_start;
 
 		logger.info('Web search fanout complete', {
 			op: 'web_fanout_complete',
@@ -305,6 +354,7 @@ export const run_web_search_fanout = async (
 			providers_failed: providers_failed.length,
 			failed_providers: providers_failed.map((f) => f.provider),
 			final_result_count: web_results.length,
+			grounded_snippets: want_grounding,
 		});
 
 		const result: FanoutResult = {

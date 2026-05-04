@@ -130,12 +130,38 @@ const inject_sse_keepalive = (original: Response): Response => {
 		}
 	};
 
-	// Only inject keepalive between complete events (buffer empty = no partial event in flight)
+	// True if the buffer holds only SSE whitespace bytes (space/tab/LF/CR).
+	// Used by the keepalive interval below to recognise upstream/proxy whitespace
+	// heartbeats — those never form a `\n\n` event boundary on their own, so the
+	// buffer-empty gate would otherwise suppress our ping forever and Cloudflare's
+	// edge proxy would tear down the connection from the client side.
+	const buffer_is_only_whitespace = (): boolean => {
+		if (total_len === 0) return true;
+		for (const c of chunks) {
+			for (let i = 0; i < c.length; i++) {
+				const b = c[i];
+				if (b !== 0x20 && b !== 0x09 && b !== 0x0a && b !== 0x0d) return false;
+			}
+		}
+		return true;
+	};
+
+	// Inject keepalive between complete events. The buffer is "safe to interleave
+	// after" when it's empty OR holds only whitespace bytes (e.g., 15 s whitespace
+	// heartbeats from an upstream relay that never form a \n\n boundary). In the
+	// whitespace-only case we flush the buffered bytes first — forwarding the
+	// heartbeats so the client's SSE parser sees them as inter-event whitespace,
+	// and resetting total_len so subsequent pings keep firing normally.
 	const keepalive = setInterval(() => {
 		if (closed) return;
-		if (total_len === 0) {
-			safe_write(SSE_PING);
+		if (!buffer_is_only_whitespace()) return;
+		if (total_len > 0) {
+			const buf = flatten();
+			chunks = [];
+			total_len = 0;
+			safe_write(buf);
 		}
+		safe_write(SSE_PING);
 	}, SSE_KEEPALIVE_INTERVAL_MS);
 
 	const pump = async () => {
