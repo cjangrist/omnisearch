@@ -44,6 +44,7 @@ Shared infrastructure used by every other module. Types, HTTP, logging, R2 traci
   - URL dedup uses normalized URL (lowercase host, strip fragment, strip trailing slash).
   - Tail rescue: results from underrepresented domains in the tail are rescued if their per-provider intra-rank is < 2.
   - Quality filter: minimum snippet length and minimum content density. Skipped when the caller passes `skip_quality_filter`.
+  - Exports `type SnippetSource = 'aggregated' | 'grounded' | 'fallback'` and an optional `snippet_source` field on `RankedWebResult`. The Groq grounding stage in `server/grounded_snippets.ts` overwrites `snippets[0]` with a query-grounded snippet and tags `snippet_source: 'grounded'`; on failure it tags `'fallback'` and leaves the original aggregated snippet untouched. Untouched ranked results carry no `snippet_source` (treated as `'aggregated'` downstream). Also exports `truncate_web_results(results, top_n)` used by the grounding stage to pick the top-N URLs to ground.
 - **`snippet_selector.ts`** — Snippet collapse logic.
   - `collapse_snippets(snippets, query)` — when 2+ providers return the same URL, scores each candidate on bigram density times query-term relevance times log-length.
   - If the runner-up has Jaccard < 0.3 vs. the winner, runs greedy sentence-level set cover within a 500-char budget to produce a merged snippet. Otherwise returns the best single snippet.

@@ -29,6 +29,8 @@ Implementation root. Everything that ships at runtime is here.
 
 **Orchestrators** → `server/web_search_fanout.ts`, `server/answer_orchestrator.ts`, `server/fetch_orchestrator.ts`. See each file's top-of-file comment for the strategy.
 
+**Grounded-snippet stage** → `server/grounded_snippets.ts` (orchestration / state machine) + `server/grounded_prompts.ts` (prompt + junk + sentinel detectors). Runs after RRF inside `web_search_fanout` when `GROQ_API_KEY` is set. Uses Groq (`openai/gpt-oss-120b`) to regenerate top-N snippets from actual page content. See `server/AGENTS.md` for the full breakdown.
+
 **Provider implementations** → `providers/<category>/<name>/index.ts`. Each exports a class implementing `SearchProvider` or `FetchProvider`, and a `registration` object whose `key()` returns the configured API key (or undefined when unset). The unified dispatcher filters PROVIDERS by `key()?.trim()` to build the active set.
 
 **Common utilities** → `common/`. `http.ts` for HTTP requests, `utils.ts` for `make_signal`, `hash_key`, `authenticate_rest_request`, `retry_with_backoff`. `logger.ts` for structured logging. `r2_trace.ts` for tracing.
@@ -49,6 +51,7 @@ Implementation root. Everything that ships at runtime is here.
 - **Init memoization with rejection retry**: both the Worker REST init path and the DO `init()` memoize the success promise but reset to `undefined` on rejection — a transient secret-load failure doesn't permanently brick the isolate.
 - **Atomic provider registry swap**: `initialize_providers()` builds local Sets, then assigns them in one statement. Concurrent reads cannot observe an empty state mid-swap.
 - **SSE keepalive write-lock**: pings interleave with pump writes via a write-lock serializer in `worker.ts inject_sse_keepalive`. Boundary detection (`\n\n`, `\r\n\r\n`, `\r\r`) is WHATWG-compliant.
+- **SSE keepalive whitespace-heartbeat tolerance** (2026-05-04): `inject_sse_keepalive` previously gated the 5 s ping on `total_len === 0`. If any upstream / proxy layer emitted bare whitespace bytes (space / tab / LF / CR) that did not form a `\n\n` SSE boundary, those bytes accumulated forever and suppressed every ping — Cloudflare's edge then tore the connection down client-side. The interval now treats a buffer of only-whitespace bytes (via `buffer_is_only_whitespace()`) as safe to interleave: it flushes the buffered whitespace first (preserving heartbeats so the client's SSE parser sees them as inter-event whitespace) then injects the ping. Partial events containing any non-whitespace byte still gate the ping, preserving the no-mid-event-corruption invariant.
 
 ## Related
 

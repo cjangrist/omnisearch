@@ -1,5 +1,12 @@
 # MCP `answer` empty-envelope anomaly — v2 (root-cause hypothesis with new evidence)
 
+> **Update 2026-05-04** — two of the structural bugs flagged below have shipped fixes since this doc was written:
+>
+> - **`_execution_context` singleton** (Recommended fix #2): replaced with AsyncLocalStorage (`run_with_execution_context` + `ctx_store` in `src/common/r2_trace.ts`, plus `with_ctx_scope` in `src/server/tools.ts`). Commits `333c4b3` (R2F03) and `200ebba` (R3F04). The diff in "Recommended fix #2" below now matches main.
+> - **`inject_sse_keepalive` whitespace-heartbeat handling**: previously the per-tick gate was `if (total_len === 0)`, which let a single bare `\n` byte from any upstream / proxy layer suppress every ping forever. The interval now flushes whitespace-only buffer contents before injecting the ping (`buffer_is_only_whitespace()` helper at ~line 138 of `src/worker.ts`), so heartbeats are forwarded to the client AND our pings keep firing on schedule. Partial events containing any non-whitespace byte still gate the ping. Ship in commit `c1e8629`.
+>
+> The remaining open hypotheses (Fix #1 / Fix #3 / Fix #4) are unchanged. Line numbers further down this doc were captured before either fix landed; they have been updated where the original references were specific.
+
 ## TL;DR
 
 The empty-envelope anomaly does **not** reproduce on the deployed worker as of 2026-04-26 ~07:30 UTC across 38 fresh long queries (parallelism 1, 3, 3, 5) — including cache-busted variants of the exact queries that reliably failed in 2026-04-25's session. The platform-side `waitUntil() … cancelled` warnings flagged as "smoking gun" by the prior agent occur on **every** POST/GET response, including a single isolated request, so they cannot be the differential cause. The remaining structural risks in the codebase — the `_execution_context` singleton in `src/common/r2_trace.ts` and the unconditional `inject_sse_keepalive` wrapper — are real bugs that should be fixed regardless, but they only explain best-effort R2 trace loss and a small additional waitUntil-budget pressure, not full envelope loss. The most likely true root cause is **third-party / platform layer flakiness in the agents-package WebSocket-to-SSE bridge** during high-concurrency load, where the DO-side `transport.send(message, {…})` arrives at a worker whose `ws.addEventListener('message', …)` callback either fires after `writer.close()` was already called by the `'close'` listener, or never fires because the WS connection was torn down by a transient platform fault. Recommended fix: harden the test-script masking bug, add a worker-side outcome log on every tools/call response so we can identify true anomalies in production, and pin/upgrade the `agents` package after reviewing its release notes for similar issues — there is no code change to our repo that reliably eliminates this anomaly without rewriting away from the `agents` WS-bridge transport.
@@ -85,13 +92,13 @@ All v1 captures show:
 
 | File | Lines | Role |
 | --- | --- | --- |
-| `src/worker.ts` | 55–171 | `inject_sse_keepalive` — wraps DO response stream with 5 s keepalive pings (correct) |
-| `src/worker.ts` | 247–254 | `fetch` entry point. **`set_trace_execution_context(ctx)` overwrites a module-level singleton — bug; see Recommended fix.** |
-| `src/worker.ts` | 358–380 | `/mcp` route delegation; conditionally wraps SSE with `inject_sse_keepalive`. Logs `POST /mcp - <status>` BEFORE the SSE body finishes streaming (intentional, but obscures real fanout duration in logs) |
+| `src/worker.ts` | 55–197 | `inject_sse_keepalive` — wraps DO response stream with 5 s keepalive pings. Update 2026-05-04: the per-tick gate now accepts a buffer that holds only SSE whitespace bytes (see `buffer_is_only_whitespace` helper and the new logic between line ~133 and line ~165). Previously a `total_len === 0` gate would suppress every ping forever once any upstream layer dropped a single bare whitespace byte into the buffer. |
+| `src/worker.ts` | 274–287 | `fetch` entry point. The `set_trace_execution_context` singleton bug below was fixed pre-c1e8629 — the entry now calls `run_with_execution_context(ctx, ...)` (AsyncLocalStorage), so the structural risk this doc flagged is closed. The keepalive whitespace fix is independent of that change. |
+| `src/worker.ts` | 391–412 | `/mcp` route delegation; conditionally wraps SSE with `inject_sse_keepalive`. Logs `POST /mcp - <status>` BEFORE the SSE body finishes streaming (intentional, but obscures real fanout duration in logs). |
 | `src/server/answer_orchestrator.ts` | 117–236 | `execute_tasks` — orchestrator with deadline race. `is_done` flag (line 134, 199) prevents late-arriving promises from mutating arrays after the deadline fires |
 | `src/server/answer_orchestrator.ts` | 238–327 | `run_answer_fanout` — emits `Answer fanout complete` log line after `execute_tasks`. Calls `trace.flush_background(result)` on every successful path |
 | `src/server/tools.ts` | 117–177 | `register_answer_tool` — returns the structured envelope with `structuredContent` and a JSON `content[0].text` mirror |
-| `src/common/r2_trace.ts` | 22–32, 154–163 | **Module-level `_execution_context` singleton** overwritten on every request entry. Bug — `flush_background` on request A may call request C's `ctx.waitUntil(…)` if 3 requests overlap. See Recommended fix |
+| `src/common/r2_trace.ts` | 22–32, 154–163 (pre-fix) | **Module-level `_execution_context` singleton** overwritten on every request entry. Bug — `flush_background` on request A may call request C's `ctx.waitUntil(…)` if 3 requests overlap. **FIXED in commit `333c4b3` (R2F03)**: the singleton was replaced with `AsyncLocalStorage<WaitUntilCapable>` (`run_with_execution_context` + `get_active_execution_context()` in `src/common/r2_trace.ts`). MCP tool callbacks also enter the store via `with_ctx_scope` in `tools.ts` (R3F04). The "Recommended fix #2" diff below is therefore historical — the codebase already matches it. |
 | `node_modules/agents/dist/mcp/index.js` | 24–223 | `createStreamingHttpHandler` — worker-side WS bridge to DO. Lines 178–206 are the WS event listeners that pump messages from DO into the SSE response writer. **No `ctx.waitUntil` for these listeners** |
 | `node_modules/agents/dist/mcp/index.js` | 567–655 | `writeSSEEvent` and `transport.send` on the DO side — wraps SSE event text into a `{type: CF_MCP_AGENT_EVENT, event, close}` envelope and sends via `connection.send(JSON.stringify(…))` |
 | `node_modules/agents/dist/mcp/index.js` | 1278+ | `McpAgent` class definition — DO uses `WorkerTransport` which manages SSE stream mappings per request id |
@@ -111,7 +118,7 @@ All v1 captures show:
 
 ### Fix 1: Add a worker-side log when the SSE message actually flushes
 
-Without this we cannot tell a true anomaly from a false positive in production. Add to `src/worker.ts` inside `inject_sse_keepalive`:
+Without this we cannot tell a true anomaly from a false positive in production. Add to `src/worker.ts` inside `inject_sse_keepalive` (note: the diff line numbers below are pre-c1e8629; the keepalive function is now lines 64-197, but the `pump()` loop and the `flush_complete_events` boundary scan are structurally identical):
 
 ```diff
 --- a/src/worker.ts
@@ -145,6 +152,8 @@ Without this we cannot tell a true anomaly from a false positive in production. 
 A more reliable detector: track whether any chunk that starts with `event: message` was seen. With this log line, every empty envelope shows as `saw_message=false`, and we can finally diagnose them in production wrangler tail output.
 
 ### Fix 2: Eliminate the `_execution_context` singleton in `r2_trace.ts`
+
+> **Already shipped — see commits `333c4b3` (R2F03) and `200ebba` (R3F04). Section retained for historical context.**
 
 The module-level `_execution_context` at `src/common/r2_trace.ts:24` is overwritten on every request (`set_trace_execution_context(ctx)` at `src/worker.ts:252`). Under concurrent load, request A's `flush_background()` (called inside its handler) may invoke request C's `ctx.waitUntil(…)` — request A's R2 trace is then anchored to request C's lifetime, leading to silent trace loss when C exits before A's R2 PUT finishes. This does not cause the empty-envelope anomaly, but it is a latent correctness bug.
 
@@ -275,7 +284,7 @@ Apply this BEFORE the next reproduction attempt — without it, you cannot tell 
    - The anomaly genuinely correlates with one specific failing third-party API call timing window.
 2. **Why does the prior agent's `wrangler_tail.log` show `POST canceled` 3 times?** Look at lines 435, 439, 443. These are POSTs being canceled at the network layer — possibly clients aborting before the response was fully streamed (Python `requests` was the only client; could a network blip have triggered re-issue?).
 3. **Is there any way to register the agents package's WS message listener with `ctx.waitUntil`?** Current `node_modules/agents/dist/mcp/index.js:178-206` does not expose this. Patching it locally would be a fork; better to file an upstream issue.
-4. **Does `worker.ts:367` correctly identify SSE responses?** It checks `response.headers.get('content-type')?.includes('text/event-stream')`. For a 202 response (notifications/initialized), content-type is null — `inject_sse_keepalive` is correctly skipped. For 200 responses with `text/event-stream`, it's wrapped. This is correct.
+4. **Does `worker.ts:399` correctly identify SSE responses?** It checks `response.headers.get('content-type')?.includes('text/event-stream')`. For a 202 response (notifications/initialized), content-type is null — `inject_sse_keepalive` is correctly skipped. For 200 responses with `text/event-stream`, it's wrapped. This is correct. (Pre-c1e8629 this lived at `worker.ts:367`.)
 5. **Should the orchestrator return both `structuredContent` AND emit a separate text event for redundancy?** Currently `tools.ts:170-172` returns a single envelope with both fields; if the bridge drops the message, both are lost. There's no way to send 2 SSE events for one tools/call response within the MCP protocol — closing the stream after the response is part of the spec.
 
 ## Status

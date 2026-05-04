@@ -140,7 +140,7 @@ Both queries return real data when retried alone. The anomaly is purely concurre
 - **MCP route:** `POST /mcp` → delegated to a Durable Object (`OmnisearchMCP` extends `McpAgent` from `agents@^0.7.9`)
 - **Per-session DO:** each MCP `initialize` mints a fresh session ID → fresh DO instance. The test script opens a new session per query, so 3 concurrent queries = 3 distinct DOs.
 - **Transport:** MCP Streamable HTTP. Server uses SSE (`text/event-stream`) for tool-call responses to allow keepalive injection during long fanouts.
-- **Custom SSE keepalive** (`src/worker.ts:55–171`): wraps the DO's response stream, injects `event: ping` every 5s between complete SSE events. This was added to defeat Claude web's 45s connection-idle timeout during the 4-min answer fanout.
+- **Custom SSE keepalive** (`src/worker.ts:55–197`): wraps the DO's response stream, injects `event: ping` every 5s between complete SSE events. This was added to defeat Claude web's 45s connection-idle timeout during the 4-min answer fanout. (Update 2026-05-04: the per-tick gate now also accepts a buffer that holds only SSE whitespace bytes — see the v2 doc and the README "SSE keepalive" section. Pre-fix line numbers in this doc may be off by ~25 lines vs. the current source.)
 
 ### Answer fanout
 
@@ -168,7 +168,7 @@ Both queries return real data when retried alone. The anomaly is purely concurre
 
 The `agents@0.7.9` package implements MCP via DO + SSE, where:
 - Each tool call response is serialized over the per-session SSE stream
-- We wrap the response with our own SSE-keepalive `TransformStream` (`src/worker.ts:64`)
+- We wrap the response with our own SSE-keepalive `TransformStream` (`src/worker.ts:64` — the `inject_sse_keepalive` arrow declaration; body extends to line 197 in current source)
 
 Under concurrent load (3 in-flight DOs, each holding a long tool call), one of:
 - The DO's response writer races our `TransformStream` injector (we have a `write_lock` but it's per-stream, not cross-stream)
@@ -237,10 +237,10 @@ The DO doesn't use storage in this codebase, but `McpAgent` may internally persi
 
 ## Files & line numbers to inspect
 
-- `src/worker.ts:55–171` — SSE keepalive injection (H1 suspect)
-- `src/worker.ts:179–213` — `OmnisearchMCP` Durable Object
-- `src/worker.ts:237–244` — `mcp_handler` setup
-- `src/worker.ts:358–390` — `/mcp` request delegation
+- `src/worker.ts:55–197` — SSE keepalive injection (H1 suspect; grew in 2026-05-04 to handle whitespace-only-buffer heartbeats. See the README "SSE keepalive" section for the new logic)
+- `src/worker.ts:205–240` — `OmnisearchMCP` Durable Object
+- `src/worker.ts:264–271` — `mcp_handler` setup
+- `src/worker.ts:391–412` — `/mcp` request delegation
 - `src/server/answer_orchestrator.ts` — full fanout, especially:
   - `:117–236` — `execute_tasks` (deadline race, late-write guard)
   - `:238–327` — `run_answer_fanout` (KV cache + trace flushing)

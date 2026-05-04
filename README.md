@@ -17,10 +17,11 @@ Omnisearch MCP is a production-grade [Model Context Protocol](https://modelconte
 |---------|----------------|------------|
 | Resilience | Single point of failure | Many providers with automatic failover |
 | Search | One engine's blind spots | Multiple engines in parallel, RRF-ranked, cross-deduplicated |
+| Snippets | Engine-supplied (often boilerplate / SEO) | Top-N regenerated from actual page content via Groq, query-framed |
 | AI Answers | One model's perspective | Consensus across multiple AI providers with citations |
 | URL Fetching | Blocked by paywalls, CAPTCHAs | Multi-provider waterfall with social media extraction |
 | Performance | Cold on every call | Global KV cache (36h TTL) — cache hits return in ~80ms |
-| Connectivity | Timeout on long operations | SSE keepalive with event-boundary buffering |
+| Connectivity | Timeout on long operations | SSE keepalive with event-boundary buffering, whitespace-heartbeat tolerant |
 | Observability | Opaque | R2-backed request/response tracing, hive-partitioned per tool |
 
 ---
@@ -65,16 +66,20 @@ omnisearch/
     ├── server/
     │   ├── answer_orchestrator.ts           # parallel AI fanout + 295s deadline + AbortController + KV cache + gemini-grounded inline
     │   ├── fetch_orchestrator.ts            # waterfall + domain breakers + parallel multi-winner racing + KV cache + skip_providers
+    │   ├── grounded_prompts.ts              # snippet-writer system prompt + junk + sentinel detectors
+    │   ├── grounded_snippets.ts             # post-RRF Groq grounding stage — bounded worker pool + per-URL deadline + retry path
     │   ├── handlers.ts                      # MCP resource handlers (provider-status / provider-info)
     │   ├── rest_fetch.ts                    # POST /fetch
     │   ├── rest_researcher.ts               # GET|POST /researcher (GPT-Researcher compat)
-    │   ├── rest_search.ts                   # POST /search
+    │   ├── rest_search.ts                   # POST /search (accepts grounded_snippets opt-out)
     │   ├── tools.ts                         # MCP tool registration; per-DO get_ctx capture (R4F01)
-    │   └── web_search_fanout.ts             # parallel search fanout + RRF + dedup + tail rescue + KV cache
+    │   └── web_search_fanout.ts             # parallel search fanout + RRF + dedup + tail rescue + grounded-snippets stage + KV cache
     └── types/
         ├── env.ts                           # CF env binding types (KV, R2, DO, secret env vars)
         └── node-async-hooks.d.ts            # minimal type stub for AsyncLocalStorage in workerd
 ```
+
+A `tools/` directory at the repo root holds offline harnesses (`grounding_smoke.py`, `grounding_compare.py`, `grounding_lib.py`) for before/after evaluation of the grounded-snippets feature against fixed query corpora. Not deployed.
 
 Each subfolder has its own `AGENTS.md` with a file-by-file breakdown — start at `AGENTS.md` (root) for the navigation hub.
 
@@ -82,11 +87,13 @@ Each subfolder has its own `AGENTS.md` with a file-by-file breakdown — start a
 
 ## Three Tools
 
-### `web_search` — Parallel-fanout search with RRF ranking
+### `web_search` — Parallel-fanout search with RRF ranking + grounded snippets
 
 Fans out the same query to all configured search engines simultaneously. Deduplicates by URL (lowercase host + strip fragment + strip trailing slash), ranks with Reciprocal Rank Fusion (`score = sum 1/(60 + rank)`), collapses multi-provider snippets via bigram Jaccard plus greedy sentence-level set cover, and rescues high-quality results from underrepresented domains in the tail.
 
-Tool input: `query`, optional `timeout_ms` (omitted = wait for all providers, full dedup), optional `include_snippets` (default `true`).
+After ranking — if `GROQ_API_KEY` is set — a **grounded-snippet stage** kicks in: the top-15 URLs are fetched in parallel through the same waterfall the `fetch` tool uses, and Groq (`openai/gpt-oss-120b`) writes a query-framed snippet describing what each page actually says. The grounded snippet replaces the engine-supplied one. Each result reports `snippet_source` ∈ `{ aggregated, grounded, fallback }` so callers can see which path produced the snippet. Default ON; set `grounded_snippets:false` per call (or omit `GROQ_API_KEY`) to return raw aggregated provider snippets at minimum latency.
+
+Tool input: `query`, optional `timeout_ms` (omitted = wait for all providers, full dedup), optional `include_snippets` (default `true`), optional `grounded_snippets` (default `true` when `GROQ_API_KEY` is configured).
 
 ### `answer` — Consensus AI answers with citations
 
@@ -161,7 +168,7 @@ The public deployment at `https://omnisearch-mcp.cjangrist.workers.dev/mcp` is u
 | Path | Method | Purpose | Auth |
 |------|--------|---------|------|
 | `/health`, `/` | GET | Liveness + active-provider count | none |
-| `/search` | POST | Search fanout, returns `[{ link, title, snippet }]` | Bearer (if configured) |
+| `/search` | POST | Search fanout, returns `[{ link, title, snippet }]`. Body accepts `grounded_snippets:false` to skip the Groq grounding stage. | Bearer (if configured) |
 | `/fetch` | POST | URL fetch, returns full extraction with `alternative_results` when `skip_providers` set | Bearer (if configured) |
 | `/researcher` | GET or POST | GPT-Researcher compatible — returns `[{ href, body }]` (search snippets, no full fetch) | Bearer or `?api_key=` query param |
 | `/mcp` | GET, POST, DELETE | MCP Streamable HTTP transport (delegates to Durable Object) | none (CORS wildcard) |
@@ -263,6 +270,14 @@ Several keys are shared with search:
 | `GITHUB_API_KEY` | GitHub fetcher | LLM-optimized REST + GraphQL multi-resource (issues, PRs, files, gists, releases, commits, repo overview) |
 | `KIMI_API_KEY` | Kimi (Moonshot AI) coding-agent fetch | requires `SCRAPFLY_API_KEY` — routed via Scrapfly residential proxy because api.kimi.com WAF blocks Cloudflare-Workers ASN |
 
+### Snippet grounding (Groq) — `web_search` tool
+
+Optional. When set, the top-15 RRF-ranked URLs are fetched and re-summarized in parallel.
+
+| Variable | Purpose |
+|----------|---------|
+| `GROQ_API_KEY` | Groq API key. Defaults: model `openai/gpt-oss-120b`, base `https://api.groq.com/openai/v1`, concurrency 3, per-URL deadline 15 s, page-body truncation 24 000 chars. Defaults are baked into `src/config/env.ts`'s `config.snippet_grounding.groq` block — no other tunable env vars. Default ON when key is present; per-call opt-out via `grounded_snippets:false`. |
+
 ### REST auth
 
 ```bash
@@ -292,7 +307,7 @@ OMNISEARCH_API_KEY=your-secret-key-here
 All three tools cache through Cloudflare KV with a **36-hour TTL** (129,600 seconds) and SHA-256-hashed keys.
 
 - **Key shape**: `<prefix>:<sha256(value)>` where prefix is `search:`, `answer:`, or `fetch:`. SHA-256 keeps every key under KV's 512-byte limit regardless of input length.
-- **Search cache binds query**: `make_cache_key(query, options)` adds a `\0sqf=true` suffix when `skip_quality_filter` is set so raw and filtered fanouts don't collide. Defense-in-depth: cached entries also store `query` and are rejected if `cached.query !== query`.
+- **Search cache binds query**: `make_cache_key(query, options)` adds a `\0sqf=true` suffix when `skip_quality_filter` is set, plus a `\0gnd=true` suffix when grounded snippets are active for the call, so raw / filtered / grounded / non-grounded fanouts don't collide. Defense-in-depth: cached entries also store `query` and are rejected if `cached.query !== query`.
 - **Answer cache binds query**: same query-echo defense.
 - **Fetch cache binds requested URL**: cached entries store `requested_url`; the read path requires `cached.requested_url === url`. The MCP tool's `skip_providers` path bypasses the cache entirely and skips the cache write — preserving the multi-provider compare semantic (returning two different providers under `alternative_results` would otherwise pollute the singular cache).
 - **Validators** (`is_valid_cached_*` in each orchestrator): full structural validation on every read. A legacy or corrupted entry is silently treated as a miss so downstream code can never crash on undefined fields.
@@ -316,7 +331,7 @@ Cloudflare Workers is a single isolate handling many concurrent requests. Severa
 
 ### SSE keepalive (Claude web 45s timeout workaround)
 
-`/mcp` POST responses are streamed back as SSE. The `agents` package's DO transport doesn't emit keepalives. The Worker injects `event: ping\ndata: keepalive\n\n` every 5s **only between complete events** — the buffer-empty check ensures pings never split a `data:` payload. Boundary detection is WHATWG-compliant (`\n\n`, `\r\n\r\n`, `\r\r`); chunks are kept as a list and only flattened when scanning, avoiding O(n^2) Uint8Array copies. A write lock (`safe_write`) serializes pump writes against interval pings.
+`/mcp` POST responses are streamed back as SSE. The `agents` package's DO transport doesn't emit keepalives. The Worker injects `event: ping\ndata: keepalive\n\n` every 5s **only between complete events** — the buffer is checked via `buffer_is_only_whitespace()` and pings interleave when the buffer is empty OR contains only SSE whitespace bytes (space / tab / LF / CR), so upstream / proxy whitespace heartbeats can't suppress every keepalive ping forever. (Pre-2026-05-04 the gate was a bare `total_len === 0` check; a single bare `\n` byte from any intermediate layer accumulated forever, suppressed pings, and let Cloudflare's edge tear the connection down client-side.) When the buffer is whitespace-only it's flushed first — so heartbeats are forwarded to the client AND our pings keep firing on schedule. Partial events containing any non-whitespace byte still gate the ping (no mid-event corruption). Boundary detection is WHATWG-compliant (`\n\n`, `\r\n\r\n`, `\r\r`); chunks are kept as a list and only flattened when scanning, avoiding O(n^2) Uint8Array copies. A write lock (`safe_write`) serializes pump writes against interval pings.
 
 ---
 
@@ -373,7 +388,10 @@ Sensitive query params (`api_key`, `key`, `token`, `app_id`, `x-api-key`, `apike
                     |  RRF Rank    Deadline +     Domain        |
                     |  + Snippet   AbortCtrl     Breakers +     |
                     |  Collapse    + Gemini      Multi-Winner   |
-                    |              Grounded      Parallel Race  |
+                    |     |        Grounded      Parallel Race  |
+                    |     v             |             |         |
+                    |  Groq Ground      |             |         |
+                    |  (top-N URLs)     |             |         |
                     |     |             |             |         |
                     |     +-------------+-------------+         |
                     |                   v                       |
@@ -390,15 +408,17 @@ Sensitive query params (`api_key`, `key`, `token`, `app_id`, `x-api-key`, `apike
 
 3. **Tail rescue** — after taking top-N, results from underrepresented domains in the tail are rescued if their per-provider intra-rank is < 2. Prevents SEO-dominated top results from drowning out niche-domain authoritative sources.
 
-4. **Multi-provider fanout IS the redundancy strategy** — `answer_orchestrator` deliberately doesn't retry individual providers (`retry_with_backoff` is NOT used here). Retrying doubles worst-case latency for rare gains; the fanout already has redundancy.
+4. **Grounded snippets** — engine-supplied snippets are notoriously SEO-padded, off-topic, or boilerplate. After RRF picks the top-15, each URL is fetched through the same waterfall the `fetch` tool uses (concurrency-capped to 3, per-URL hard deadline 15 s) and Groq (`openai/gpt-oss-120b`) writes a query-framed snippet from the actual page body. Pre-Groq pattern detection (paywall / login-wall / cookie-wall / JS-shell / bot-challenge) and post-Groq sentinel detection (`[no usable content]`, `[navigation only]`, `[page not found]`, `[search results page]`, `[login required]`) trigger a single retry through the waterfall with `skip_providers={attempt-1 winner}` — the search engines have already vouched for relevance, so a second fetcher is more useful than re-asking the model. Failures fall back transparently to the original aggregated snippet (`snippet_source: 'fallback'`) so a single bad URL never breaks the result set. Failure outcomes are classified into 8 buckets and reported via a single `grounding_aggregate` log line per call (grounded ratio, p50/p95/max latency, provider wins, retry count, timeout count). The model choice (120B over 20B) is deliberate — the 20B emitted degenerate-sampling output under detailed-prompt + 6k-token-context load.
 
-5. **Multi-winner parallel race in fetch** — when `skip_providers` triggers `target_count = 2`, parallel steps collect successes up to the target rather than `Promise.any`-ing the first. Once settled, late-arriving rejections are dropped from both `ctx.failed` and the trace — the public response and the trace tell the same story.
+5. **Multi-provider fanout IS the redundancy strategy** — `answer_orchestrator` deliberately doesn't retry individual providers (`retry_with_backoff` is NOT used here). Retrying doubles worst-case latency for rare gains; the fanout already has redundancy.
 
-6. **Empty-active-set guard** — if every active fetch provider was filtered out by `skip_providers`, the orchestrator throws `INVALID_INPUT` (REST → 400) instead of running the waterfall to exhaustion and emitting a misleading 502 with `"Tried: <empty>"`.
+6. **Multi-winner parallel race in fetch** — when `skip_providers` triggers `target_count = 2`, parallel steps collect successes up to the target rather than `Promise.any`-ing the first. Once settled, late-arriving rejections are dropped from both `ctx.failed` and the trace — the public response and the trace tell the same story.
 
-7. **Failure isolation** — every provider runs in its own promise. One provider's exception never crashes the others. Partial results are always returned with `providers_failed` metadata.
+7. **Empty-active-set guard** — if every active fetch provider was filtered out by `skip_providers`, the orchestrator throws `INVALID_INPUT` (REST → 400) instead of running the waterfall to exhaustion and emitting a misleading 502 with `"Tried: <empty>"`.
 
-8. **All-failed → 502, not 200**: REST `/search` and `/researcher` return 502 with `{ error, failed_providers }` when every provider failed.
+8. **Failure isolation** — every provider runs in its own promise. One provider's exception never crashes the others. Partial results are always returned with `providers_failed` metadata.
+
+9. **All-failed → 502, not 200**: REST `/search` and `/researcher` return 502 with `{ error, failed_providers }` when every provider failed.
 
 ---
 

@@ -5,10 +5,10 @@ Runtime configuration. Populated per-Worker-isolate from Cloudflare Worker env b
 ## Files
 
 - **`env.ts`** — Single source of truth for runtime config.
-  - Exports `config` — a frozen-shape literal with three keys: `search`, `ai_response`, `fetch`. Each provider has `api_key` (or `username`/`password`/`account_id`) + `base_url` + `timeout` (and provider-specific extras like `model`, `zone`).
+  - Exports `config` — a frozen-shape literal with four keys: `search`, `ai_response`, `fetch`, `snippet_grounding`. Each provider has `api_key` (or `username`/`password`/`account_id`) + `base_url` + `timeout` (and provider-specific extras like `model`, `zone`).
   - Exports `OPENWEBUI_API_KEY`, `OMNISEARCH_API_KEY`, `kv_cache` — top-level singletons set by `initialize_config(env)`.
   - `initialize_config(env)` populates `config.*.api_key` from env bindings, sets the KV cache reference, calls `set_trace_r2_bucket(env.TRACE_BUCKET)`, and resets conditional fields (LLM bridge URLs, BrightData zone) so removing a binding takes effect on the next isolate boot.
-  - `validate_config()` walks the config tree, logs counts of available vs. missing providers. Called once per init.
+  - `validate_config()` walks the config tree, logs counts of available vs. missing providers (including `snippet_grounding.groq`). Called once per init.
 
 ## LLM bridge wiring detail
 
@@ -17,6 +17,23 @@ The OpenAI-compatible LLM bridge (chatgpt / claude / gemini / kimi) requires BOT
 ## Gemini-grounded wiring detail
 
 `config.ai_response.gemini_grounded.api_key = env.GEMINI_GROUNDED_API_KEY`. Optional `GEMINI_GROUNDED_MODEL` override; default `gemini-3.1-flash-lite-preview`. This provider is NOT registered in `unified/ai_search.ts PROVIDERS` — it's invoked directly from `answer_orchestrator.ts`. Setting the key alone is enough; no other registration step.
+
+## Snippet grounding (Groq) wiring detail
+
+`config.snippet_grounding.groq` is a self-contained block driving the `/search` grounding stage in `src/server/grounded_snippets.ts`. Fields and defaults:
+
+- `api_key`     — `env.GROQ_API_KEY`. Default OFF (undefined). When set, the grounding stage runs after RRF for `web_search` / `POST /search`.
+- `base_url`    — `https://api.groq.com/openai/v1` (OpenAI-compatible chat-completions endpoint).
+- `model`       — `openai/gpt-oss-120b`. Chosen over the 20B variant after the 20B emitted degenerate-sampling output (`hhgghghvgegggg`-style mash) under detailed-prompt + 6k-token-context load. Drop-in tokenizer-compatible; ~6× params; 500 TPS comfortably under the 2 s/call latency budget.
+- `timeout`     — `60000` ms (Groq HTTP timeout — separate from `per_url_deadline_ms`).
+- `max_content_chars` — `24000` (page body truncation before sending to Groq).
+- `concurrency` — `3` (worker pool cap so the fetch waterfall has room for within-URL failover).
+- `per_url_deadline_ms` — `15000` (deadline per URL pipeline; aborts the inner Groq HTTP via `AbortController` on fire).
+- `retry_on_groq_empty` — `true` (back-compat tunable that controls the single junk/sentinel-driven retry).
+- `fetch_min_content_chars` — `50` (skip Groq when the page body is below this).
+- `groq_min_snippet_chars` — `1` (treat empty Groq output as `groq_empty` outcome).
+
+Unlike the Gemini-grounded block (under `ai_response`), this block lives at the top level of `config` because it isn't a peer of the AI answer providers — it's a separate pipeline plugged into `web_search_fanout`. The wiring in `initialize_config(env)` is a single line: `config.snippet_grounding.groq.api_key = env.GROQ_API_KEY`. No registration in any unified dispatcher; the orchestrator imports `config.snippet_grounding.groq` directly.
 
 ## Conventions / Invariants
 

@@ -15,6 +15,7 @@ You are at the top of `omnisearch` — a Cloudflare-Workers MCP server that aggr
 | `.env.example` | Documents env vars. Secrets live in Doppler / `wrangler secret`. May lag the actual `src/types/env.ts` — if a binding works at runtime but isn't in `.env.example`, regenerate from `types/env.ts`. |
 | `docs/` | Postmortems, ROI analyses, multi-reviewer hydra-heads synthesis docs. See `docs/AGENTS.md`. |
 | `src/` | Implementation. See `src/AGENTS.md`. |
+| `tools/` | Offline harnesses (Python). Currently: `grounding_smoke.py`, `grounding_compare.py`, `grounding_lib.py` — before/after comparison runs for the grounded-snippets feature against fixed query corpora. Not deployed; run locally for tuning. |
 | `tmp/` | Hydra-review sandboxes, ad-hoc test artifacts. **Ignore — do not edit, do not include in releases.** |
 | `.wrangler/` | Local wrangler state. Ignore. |
 | `trash/` | Per CLAUDE.md rule: `rm` is forbidden, deletions move here. |
@@ -41,9 +42,10 @@ The active provider count from `/health` is `search.size + ai_response.size + fe
 **MCP tool registration** → `src/server/tools.ts`. Tools are registered against an `McpServer` provided by the DO. **Each tool closure must capture its own `get_ctx` getter** (R4F01) — see comment block at top of `tools.ts`. Schemas are Zod.
 
 **Orchestrator behavior** —
-- search fanout + RRF + cache + tail rescue → `src/server/web_search_fanout.ts`
+- search fanout + RRF + cache + tail rescue + grounded-snippets stage → `src/server/web_search_fanout.ts`
 - AI answer fanout + 295s deadline + abort + cache + gemini-grounded inline → `src/server/answer_orchestrator.ts`
 - fetch waterfall + breakers + multi-winner parallel race + skip_providers + cache → `src/server/fetch_orchestrator.ts`
+- grounded snippets (Groq) — top-N URLs fetched + summarized after RRF → `src/server/grounded_snippets.ts` + `src/server/grounded_prompts.ts`. Default ON when `GROQ_API_KEY` is set; opt-out per call with `grounded_snippets:false`.
 
 **Caching** — every orchestrator has a `is_valid_cached_*` validator and binds the request key (`query` or `requested_url`) inside the cached payload as defense-in-depth. See `README.md` "Caching" section.
 
@@ -85,7 +87,7 @@ The active provider count from `/health` is `search.size + ai_response.size + fe
 
 ## Gotchas / History
 
-- **Skip_providers is on `fetch` only.** It does NOT exist on the `answer` or `web_search` tools. Several upstream prompts confused this — the code is the source of truth (`src/server/tools.ts`).
+- **Skip_providers is on `fetch` only.** It does NOT exist on the `answer` or `web_search` tools. Several upstream prompts confused this — the code is the source of truth (`src/server/tools.ts`). (Internally, `grounded_snippets.ts` does pass `skip_providers={attempt-1 winner}` into `run_fetch_race` for its retry path, but that's not exposed as a tool input.)
 - **Kimi search is registered but currently disabled** (no key configured). Per `docs/kimi-search-roi-analysis.md`: median query gets zero unique URLs from Kimi, 41% of attempts time-abort, and Scrapfly residential proxy adds ~$0.00875/call. Do NOT delete the provider — keep it dormant for re-enable if the upstream improves. Kimi *fetch* (separate path) is still active.
 - **Gemini-grounded is special**: not a regular `SearchProvider` registered through `unified/ai_search.ts`. It's invoked from inside `run_answer_fanout` via `gemini_grounded_search(query, sources, signal)` after pulling sources from a quick (10s timeout) inline web_search_fanout. Its trace links to the inner web_search trace via `parent_trace_id`.
 - **Brave has TWO separate keys**: `BRAVE_API_KEY` for web search, `BRAVE_ANSWER_API_KEY` for the SSE answer endpoint. Setting one does not enable the other.
