@@ -1,6 +1,6 @@
 # AGENTS.md — src/providers/search/
 
-10 web-search providers. Each one takes a query and returns a ranked `SearchResult[]`. The unified dispatcher (`../unified/web_search.ts`) fans out to all active ones in parallel; results are deduplicated by URL and ranked with Reciprocal Rank Fusion in `../../server/web_search_fanout.ts`.
+11 web-search providers. Each one takes a query and returns a ranked `SearchResult[]`. The unified dispatcher (`../unified/web_search.ts`) fans out to all active ones in parallel; results are deduplicated by URL and ranked with Reciprocal Rank Fusion in `../../server/web_search_fanout.ts`.
 
 ## Subfolders
 
@@ -16,6 +16,7 @@
 | [`linkup/`](linkup/AGENTS.md) | `https://api.linkup.so/v1/search` | `LINKUP_API_KEY` | Standard depth, text outputs; key shared with `linkup` fetch. |
 | [`you/`](you/AGENTS.md) | `https://ydc-index.io/v1/search` | `YOU_API_KEY` | LLM-oriented snippets; key shared with `you` fetch. |
 | [`kimi/`](kimi/AGENTS.md) | `https://api.kimi.com/coding/v1/search` (proxied) | `KIMI_API_KEY` + `SCRAPFLY_API_KEY` | Moonshot AI's coding-API search. Routed via Scrapfly residential proxy because api.kimi.com blocks Cloudflare-Workers ASN. **Currently disabled in production** per `docs/kimi-search-roi-analysis.md`. |
+| [`parallel/`](parallel/AGENTS.md) | `https://api.parallel.ai/v1/search` (mode:"advanced") | `PARALLEL_API_KEY` | Owns its own crawler/index — 46% URL uniqueness vs omnisearch top-15 in pre-integration eval. `x-api-key` auth; `max_results` under `advanced_settings`. |
 
 ## Conventions / Invariants
 

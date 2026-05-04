@@ -21,7 +21,7 @@ import { config } from '../../../config/env.js';
 import { build_kimi_search_headers } from './headers.js';
 import { proxy_post_via_scrapfly } from './scrapfly_proxy.js';
 
-const DEFAULT_LIMIT = 10;
+const DEFAULT_LIMIT = 20;
 const ENABLE_PAGE_CRAWLING = false;
 const REMOTE_TIMEOUT_SECONDS = 30;
 const SEARCH_PATH = '/coding/v1/search';

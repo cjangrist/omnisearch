@@ -8,7 +8,7 @@ Provider adapters for the three tools, plus unified dispatchers and provider-set
 
 ## Subfolders
 
-- **`search/`** — 10 web-search providers (`tavily`, `brave`, `kagi`, `exa`, `firecrawl`, `perplexity`, `serpapi`, `linkup`, `you`, `kimi`). Each implements `SearchProvider` and exports a `registration` object. See `search/AGENTS.md`.
+- **`search/`** — 11 web-search providers (`tavily`, `brave`, `kagi`, `exa`, `firecrawl`, `perplexity`, `serpapi`, `linkup`, `you`, `kimi`, `parallel`). Each implements `SearchProvider` and exports a `registration` object. See `search/AGENTS.md`.
 - **`ai_response/`** — AI answer providers. 7 leaf folders (`brave_answer`, `exa_answer`, `gemini_grounded`, `kagi_fastgpt`, `llm_search`, `perplexity`, `tavily_answer`) but `llm_search` exports a 4-element `registration` array (chatgpt, claude, gemini, kimi) so the unified registry sees 9 entries. `gemini_grounded` is special — it's invoked directly from `answer_orchestrator.ts`, not via the unified dispatcher. See `ai_response/AGENTS.md`.
 - **`fetch/`** — 28 URL fetch providers. See `fetch/AGENTS.md` for the full list. Most are general-purpose markdown-extractors; three are specialists (github, supadata, sociavault) and run as domain breakers in the waterfall.
 - **`unified/`** — Three dispatchers: `web_search.ts`, `ai_search.ts`, `fetch.ts`. Each imports every leaf module's registration, builds a `PROVIDERS` array, and exposes a `Unified<Category>Provider` class that filters by `key()?.trim()` at construction. See `unified/AGENTS.md`.

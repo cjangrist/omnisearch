@@ -22,8 +22,8 @@ You are at the top of `omnisearch` — a Cloudflare-Workers MCP server that aggr
 
 ## Provider count cheatsheet
 
-The active provider count from `/health` is `search.size + ai_response.size + fetch.size`, populated by `initialize_providers()`. With every key set, the upper bound is **47**:
-- **10 search providers**: tavily, brave, kagi, exa, firecrawl, perplexity, serpapi, linkup, you, kimi (kimi requires both `KIMI_API_KEY` and `SCRAPFLY_API_KEY`).
+The active provider count from `/health` is `search.size + ai_response.size + fetch.size`, populated by `initialize_providers()`. With every key set, the upper bound is **48**:
+- **11 search providers**: tavily, brave, kagi, exa, firecrawl, perplexity, serpapi, linkup, you, kimi, parallel (kimi requires both `KIMI_API_KEY` and `SCRAPFLY_API_KEY`; parallel uses `PARALLEL_API_KEY`).
 - **9 AI providers in the unified registry**: 5 named (perplexity, kagi_fastgpt, exa_answer, brave_answer, tavily_answer) + 4 LLM-bridge sub-providers (chatgpt, claude, gemini, kimi) registered via spread `...llm_reg`.
 - **28 fetch providers** (the count is from `unified/fetch.ts PROVIDERS` length).
 

@@ -95,7 +95,7 @@ class ToolRegistry {
 			{
 				description: `PREFERRED over any single-provider search tool. Fans out your query to multiple search engines IN PARALLEL, deduplicates results across all engines, and ranks them using Reciprocal Rank Fusion (RRF) — pages found by multiple independent engines rank highest. Handles provider failures gracefully. For AI-written answers with citations, use the "answer" tool instead.
 
-Snippets are grounded by default: after ranking, the top-15 URLs are fetched in parallel and snippets are regenerated from actual page content via Groq's openai/gpt-oss-20b for query relevance. Each result reports snippet_source ("grounded", "fallback", or "aggregated"). Set grounded_snippets:false to skip and return raw aggregated provider snippets for minimum latency.`,
+Snippets are grounded by default: after ranking, the top-20 URLs are fetched in parallel and snippets are regenerated from actual page content via Groq's openai/gpt-oss-120b for query relevance. Each result reports snippet_source ("grounded", "fallback", or "aggregated"). Set grounded_snippets:false to skip and return raw aggregated provider snippets for minimum latency.`,
 				annotations: {
 					title: 'Web Search (parallel fanout)',
 					readOnlyHint: true,

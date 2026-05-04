@@ -69,6 +69,11 @@ export const config = {
 			base_url: 'https://api.kimi.com',
 			timeout: 30000,
 		},
+		parallel: {
+			api_key: undefined as string | undefined,
+			base_url: 'https://api.parallel.ai',
+			timeout: 30000,
+		},
 	},
 	ai_response: {
 		perplexity: {
@@ -312,6 +317,7 @@ export const initialize_config = (env: Env) => {
 	config.search.linkup.api_key = env.LINKUP_API_KEY;
 	config.search.you.api_key = env.YOU_API_KEY;
 	config.search.kimi.api_key = env.KIMI_API_KEY;
+	config.search.parallel.api_key = env.PARALLEL_API_KEY;
 
 	// AI response providers
 	config.ai_response.perplexity.api_key = env.PERPLEXITY_API_KEY;
