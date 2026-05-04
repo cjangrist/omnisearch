@@ -61,7 +61,7 @@ omnisearch/
     │   ├── index.ts                         # initialize_providers() — atomic-swap registries
     │   ├── ai_response/                     # AI answer providers (5 named + 4 LLM bridge sub-providers + 1 special gemini-grounded)
     │   ├── fetch/                           # 28 URL fetch providers — markdown/text/structured extraction
-    │   ├── search/                          # 10 web-search providers — query → ranked SearchResult[]
+    │   ├── search/                          # 11 web-search providers — query → ranked SearchResult[]
     │   └── unified/                         # provider-abstraction dispatchers — auto-built from registrations
     ├── server/
     │   ├── answer_orchestrator.ts           # parallel AI fanout + 295s deadline + AbortController + KV cache + gemini-grounded inline
@@ -91,7 +91,7 @@ Each subfolder has its own `AGENTS.md` with a file-by-file breakdown — start a
 
 Fans out the same query to all configured search engines simultaneously. Deduplicates by URL (lowercase host + strip fragment + strip trailing slash), ranks with Reciprocal Rank Fusion (`score = sum 1/(60 + rank)`), collapses multi-provider snippets via bigram Jaccard plus greedy sentence-level set cover, and rescues high-quality results from underrepresented domains in the tail.
 
-After ranking — if `GROQ_API_KEY` is set — a **grounded-snippet stage** kicks in: the top-15 URLs are fetched in parallel through the same waterfall the `fetch` tool uses, and Groq (`openai/gpt-oss-120b`) writes a query-framed snippet describing what each page actually says. The grounded snippet replaces the engine-supplied one. Each result reports `snippet_source` ∈ `{ aggregated, grounded, fallback }` so callers can see which path produced the snippet. Default ON; set `grounded_snippets:false` per call (or omit `GROQ_API_KEY`) to return raw aggregated provider snippets at minimum latency.
+After ranking — if `GROQ_API_KEY` is set — a **grounded-snippet stage** kicks in: the top-20 URLs are fetched in parallel through the same waterfall the `fetch` tool uses, and Groq (`openai/gpt-oss-120b`) writes a query-framed snippet describing what each page actually says. The grounded snippet replaces the engine-supplied one. Each result reports `snippet_source` ∈ `{ aggregated, grounded, fallback }` so callers can see which path produced the snippet. Default ON; set `grounded_snippets:false` per call (or omit `GROQ_API_KEY`) to return raw aggregated provider snippets at minimum latency.
 
 Tool input: `query`, optional `timeout_ms` (omitted = wait for all providers, full dedup), optional `include_snippets` (default `true`), optional `grounded_snippets` (default `true` when `GROQ_API_KEY` is configured).
 
@@ -272,7 +272,7 @@ Several keys are shared with search:
 
 ### Snippet grounding (Groq) — `web_search` tool
 
-Optional. When set, the top-15 RRF-ranked URLs are fetched and re-summarized in parallel.
+Optional. When set, the top-20 RRF-ranked URLs are fetched and re-summarized in parallel.
 
 | Variable | Purpose |
 |----------|---------|
@@ -408,7 +408,7 @@ Sensitive query params (`api_key`, `key`, `token`, `app_id`, `x-api-key`, `apike
 
 3. **Tail rescue** — after taking top-N, results from underrepresented domains in the tail are rescued if their per-provider intra-rank is < 2. Prevents SEO-dominated top results from drowning out niche-domain authoritative sources.
 
-4. **Grounded snippets** — engine-supplied snippets are notoriously SEO-padded, off-topic, or boilerplate. After RRF picks the top-15, each URL is fetched through the same waterfall the `fetch` tool uses (concurrency-capped to 3, per-URL hard deadline 15 s) and Groq (`openai/gpt-oss-120b`) writes a query-framed snippet from the actual page body. Pre-Groq pattern detection (paywall / login-wall / cookie-wall / JS-shell / bot-challenge) and post-Groq sentinel detection (`[no usable content]`, `[navigation only]`, `[page not found]`, `[search results page]`, `[login required]`) trigger a single retry through the waterfall with `skip_providers={attempt-1 winner}` — the search engines have already vouched for relevance, so a second fetcher is more useful than re-asking the model. Failures fall back transparently to the original aggregated snippet (`snippet_source: 'fallback'`) so a single bad URL never breaks the result set. Failure outcomes are classified into 8 buckets and reported via a single `grounding_aggregate` log line per call (grounded ratio, p50/p95/max latency, provider wins, retry count, timeout count). The model choice (120B over 20B) is deliberate — the 20B emitted degenerate-sampling output under detailed-prompt + 6k-token-context load.
+4. **Grounded snippets** — engine-supplied snippets are notoriously SEO-padded, off-topic, or boilerplate. After RRF picks the top-20, each URL is fetched through the same waterfall the `fetch` tool uses (concurrency-capped to 3, per-URL hard deadline 15 s) and Groq (`openai/gpt-oss-120b`) writes a query-framed snippet from the actual page body. Pre-Groq pattern detection (paywall / login-wall / cookie-wall / JS-shell / bot-challenge) and post-Groq sentinel detection (`[no usable content]`, `[navigation only]`, `[page not found]`, `[search results page]`, `[login required]`) trigger a single retry through the waterfall with `skip_providers={attempt-1 winner}` — the search engines have already vouched for relevance, so a second fetcher is more useful than re-asking the model. Failures fall back transparently to the original aggregated snippet (`snippet_source: 'fallback'`) so a single bad URL never breaks the result set. Failure outcomes are classified into 8 buckets and reported via a single `grounding_aggregate` log line per call (grounded ratio, p50/p95/max latency, provider wins, retry count, timeout count). The model choice (120B over 20B) is deliberate — the 20B emitted degenerate-sampling output under detailed-prompt + 6k-token-context load.
 
 5. **Multi-provider fanout IS the redundancy strategy** — `answer_orchestrator` deliberately doesn't retry individual providers (`retry_with_backoff` is NOT used here). Retrying doubles worst-case latency for rare gains; the fanout already has redundancy.
 

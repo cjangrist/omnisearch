@@ -13,8 +13,8 @@ import { ground_top_results } from './grounded_snippets.js';
 
 const logger = loggers.search();
 
-const DEFAULT_TOP_N = 15;
-const GROUNDING_TOP_N = 15;
+const DEFAULT_TOP_N = 20;
+const GROUNDING_TOP_N = 20;
 const KV_SEARCH_TTL_SECONDS = 129_600; // 36 hours
 const VALID_SNIPPET_SOURCES: ReadonlySet<SnippetSource> = new Set<SnippetSource>(['aggregated', 'grounded', 'fallback']);
 

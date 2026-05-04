@@ -5,7 +5,7 @@ import type { SearchResult } from './types.js';
 import { collapse_snippets } from './snippet_selector.js';
 
 const RRF_K = 60;
-const DEFAULT_TOP_N = 15;
+const DEFAULT_TOP_N = 20;
 const RESCUE_INTRA_RANK_THRESHOLD = 2;
 const MIN_RRF_SCORE = 0.01;
 const MIN_SNIPPET_CHARS_SINGLE_PROVIDER = 300;

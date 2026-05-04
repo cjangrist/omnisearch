@@ -8,6 +8,7 @@ export interface Env {
 	EXA_API_KEY?: string;
 	SERPAPI_API_KEY?: string;
 	LINKUP_API_KEY?: string;
+	PARALLEL_API_KEY?: string;
 
 	// AI provider API keys
 	PERPLEXITY_API_KEY?: string;
