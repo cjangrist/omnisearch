@@ -181,7 +181,7 @@ IMPORTANT: This tool fans out to many providers and can take up to 2 minutes to 
 			},
 			async ({ query }) => with_ctx_scope(get_ctx, () => run_with_request_id(crypto.randomUUID(), async () => {
 				try {
-					const answer_result = await run_answer_fanout(ai_ref, web_ref, query);
+					const answer_result = await run_answer_fanout(ai_ref, web_ref, this.fetch_provider, query);
 					if (!answer_result) {
 						return {
 							content: [{ type: 'text' as const, text: 'No AI providers configured. Set API keys for at least one AI response provider.' }],

@@ -7,6 +7,7 @@ import { hash_key } from '../common/utils.js';
 import { config, kv_cache } from '../config/env.js';
 import { get_active_ai_providers, type AISearchProvider, type UnifiedAISearchProvider } from '../providers/unified/ai_search.js';
 import type { UnifiedWebSearchProvider } from '../providers/unified/web_search.js';
+import type { UnifiedFetchProvider } from '../providers/unified/fetch.js';
 import { gemini_grounded_search } from '../providers/ai_response/gemini_grounded/index.js';
 import { run_web_search_fanout } from './web_search_fanout.js';
 import { TraceContext, get_active_trace, run_with_trace } from '../common/r2_trace.js';
@@ -97,6 +98,7 @@ const build_answer_entry = (
 const build_tasks = (
 	ai_search_ref: UnifiedAISearchProvider,
 	web_search_ref: UnifiedWebSearchProvider | undefined,
+	fetch_ref: UnifiedFetchProvider | undefined,
 	query: string,
 	signal?: AbortSignal,
 ): ProviderTask[] => {
@@ -118,7 +120,13 @@ const build_tasks = (
 			name: 'gemini-grounded',
 			started_at: Date.now(),
 			promise: (async () => {
-				const fanout = await run_web_search_fanout(web_search_ref, query, { signal, timeout_ms: 10_000 });
+				// Pass fetch_provider so the inner fanout produces Groq-grounded snippets
+				// (when GROQ_API_KEY is set) and so the cache key matches the web_search
+				// tool's grounded-true default — repeated queries become cache hits.
+				const fanout = await run_web_search_fanout(web_search_ref, query, {
+					signal,
+					fetch_provider: fetch_ref,
+				});
 				const sources = fanout.web_results.map((r) => ({
 					url: r.url,
 					snippets: r.snippets,
@@ -288,6 +296,7 @@ const execute_tasks = async (
 export const run_answer_fanout = async (
 	ai_search_ref: UnifiedAISearchProvider,
 	web_search_ref: UnifiedWebSearchProvider | undefined,
+	fetch_ref: UnifiedFetchProvider | undefined,
 	query: string,
 ): Promise<AnswerResult | null> => {
 	const trace = new TraceContext(crypto.randomUUID(), 'answer');
@@ -316,7 +325,7 @@ export const run_answer_fanout = async (
 		}
 
 		const abort_controller = new AbortController();
-		const tasks = build_tasks(ai_search_ref, web_search_ref, query, abort_controller.signal);
+		const tasks = build_tasks(ai_search_ref, web_search_ref, fetch_ref, query, abort_controller.signal);
 		if (tasks.length === 0) {
 			logger.warn('No AI providers available for answer', {
 				op: 'answer_fanout',
