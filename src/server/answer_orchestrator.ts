@@ -166,6 +166,31 @@ const execute_tasks = async (
 				const duration_ms = Date.now() - task.started_at;
 				completed_count++;
 				completed_set.add(task.name);
+
+				// Empty resolves count as failed, not succeeded. Without this, providers
+				// that return zero items or items with empty snippets get masked by
+				// build_answer_entry's "No answer returned" fallback and inflate
+				// providers_succeeded — making consensus appear stronger than it is and
+				// poisoning the KV cache (is_complete_fanout treats them as wins).
+				const has_content = Array.isArray(value)
+					&& value.length > 0
+					&& (value[0]?.snippet ?? '').trim().length > 0;
+				if (!has_content) {
+					const error_msg = !Array.isArray(value) || value.length === 0
+						? 'Provider returned no items'
+						: 'Provider returned empty answer text';
+					failed.push({ provider: task.name, error: error_msg, duration_ms });
+					trace?.record_provider_error(task.name, error_msg, duration_ms);
+					logger.warn('Provider returned empty result', {
+						op: 'provider_empty',
+						provider: task.name,
+						progress: `${completed_count}/${total_count}`,
+						duration_ms,
+						error: error_msg,
+					});
+					return;
+				}
+
 				const entry = { ...build_answer_entry(task.name, value), duration_ms };
 				answers.push(entry);
 				trace?.record_provider_complete(task.name, value, duration_ms);
