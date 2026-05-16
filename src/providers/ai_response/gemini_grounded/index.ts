@@ -45,11 +45,20 @@ interface GeminiGenerateContentResponse {
 	modelVersion?: string;
 }
 
+// Single source of truth for collapsing a GroundingSource's snippets[] (already
+// reduced to ≤1 entry per URL by collapse_snippets in rank_and_merge — but we
+// stay defensive in case that upstream contract changes). Reused below for both
+// the Gemini prompt body AND the per-citation snippet field so the citations
+// surface the same aggregated/grounded snippets the search pipeline produced —
+// no information thrown away, no second fetch needed.
+const flatten_snippets = (snippets: string[]): string =>
+	snippets.filter(Boolean).join('\n');
+
 const build_prompt = (query: string, sources: GroundingSource[]): string => {
 	if (sources.length === 0) return query;
 
 	const source_blocks = sources.map((s) => {
-		const snippet_text = s.snippets.filter(Boolean).join('\n');
+		const snippet_text = flatten_snippets(s.snippets);
 		return snippet_text
 			? `${s.url}\n${snippet_text}`
 			: s.url;
@@ -137,6 +146,13 @@ export async function gemini_grounded_search(
 			? fetched_urls
 			: filtered_sources.map((s) => s.url).slice(0, 10);
 
+		// Carry the snippets we already paid the search fanout for into the citations
+		// — answer_orchestrator's build_answer_entry strips the placeholder
+		// "Source: <url>" string, so without this the citations come back snippet-less.
+		const snippet_by_url = new Map(
+			filtered_sources.map((s) => [s.url, flatten_snippets(s.snippets)]),
+		);
+
 		const results: SearchResult[] = [
 			{
 				title: `${PROVIDER_NAME} (${model})`,
@@ -151,13 +167,16 @@ export async function gemini_grounded_search(
 				citations_from: fetched_urls.length > 0 ? 'gemini_url_context' : 'web_search_fanout',
 			},
 			},
-			...citation_urls.map((u) => ({
-				title: new URL(u).hostname.replace(/^www\./, ''),
-				url: u,
-				snippet: `Source: ${u}`,
-				score: 0,
-				source_provider: PROVIDER_NAME,
-			})),
+			...citation_urls.map((u) => {
+				const carried = snippet_by_url.get(u) ?? '';
+				return {
+					title: new URL(u).hostname.replace(/^www\./, ''),
+					url: u,
+					snippet: carried || `Source: ${u}`,
+					score: 0,
+					source_provider: PROVIDER_NAME,
+				};
+			}),
 		];
 
 		return results;
