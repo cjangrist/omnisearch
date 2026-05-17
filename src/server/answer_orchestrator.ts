@@ -3,8 +3,7 @@
 
 import type { SearchResult } from '../common/types.js';
 import { loggers } from '../common/logger.js';
-import { hash_key } from '../common/utils.js';
-import { config, kv_cache } from '../config/env.js';
+import { config } from '../config/env.js';
 import { get_active_ai_providers, type AISearchProvider, type UnifiedAISearchProvider } from '../providers/unified/ai_search.js';
 import type { UnifiedWebSearchProvider } from '../providers/unified/web_search.js';
 import type { UnifiedFetchProvider } from '../providers/unified/fetch.js';
@@ -16,7 +15,6 @@ const logger = loggers.aiResponse();
 
 const GLOBAL_TIMEOUT_MS = 295_000; // 4m55s hard deadline for the entire fanout
 const PROGRESS_INTERVAL_MS = 5_000;
-const KV_ANSWER_TTL_SECONDS = 129_600; // 36 hours
 
 interface ProviderTask {
 	name: string;
@@ -46,30 +44,6 @@ export interface AnswerResult {
 	answers: AnswerEntry[];
 }
 
-const is_valid_cached_answer = (raw: unknown): raw is AnswerResult => {
-	if (!raw || typeof raw !== 'object') return false;
-	const r = raw as Record<string, unknown>;
-	if (typeof r.query !== 'string') return false;
-	if (typeof r.total_duration_ms !== 'number') return false;
-	if (!Array.isArray(r.providers_queried) || !r.providers_queried.every((p) => typeof p === 'string')) return false;
-	if (!Array.isArray(r.providers_succeeded) || !r.providers_succeeded.every((p) => typeof p === 'string')) return false;
-	if (!Array.isArray(r.providers_failed)) return false;
-	if (!r.providers_failed.every((f) =>
-		f && typeof f === 'object' &&
-		typeof (f as Record<string, unknown>).provider === 'string' &&
-		typeof (f as Record<string, unknown>).error === 'string' &&
-		typeof (f as Record<string, unknown>).duration_ms === 'number'
-	)) return false;
-	if (!Array.isArray(r.answers)) return false;
-	if (!r.answers.every((a) =>
-		a && typeof a === 'object' &&
-		typeof (a as Record<string, unknown>).source === 'string' &&
-		typeof (a as Record<string, unknown>).answer === 'string' &&
-		typeof (a as Record<string, unknown>).duration_ms === 'number' &&
-		Array.isArray((a as Record<string, unknown>).citations)
-	)) return false;
-	return true;
-};
 
 const build_answer_entry = (
 	provider_name: string,
@@ -304,26 +278,6 @@ export const run_answer_fanout = async (
 	trace.request_environment = { query };
 
 	return run_with_trace(trace, async () => {
-		// Check KV cache first
-		if (kv_cache) {
-			try {
-				const answer_cache_key = await hash_key('answer:', query);
-				const raw = await kv_cache.get(answer_cache_key, 'json') as unknown;
-				// Defense-in-depth: SHA-256 makes key collisions infeasible, but if a
-				// future bug ever wrote query A's result under query B's key, the
-				// echoed query mismatch turns "silent wrong answer" into "cache miss
-				// + fanout" with no correctness loss.
-				const cached = is_valid_cached_answer(raw) && raw.query === query ? raw : undefined;
-				if (cached) {
-					logger.debug('Returning cached answer result', { op: 'answer_cache_hit', query: query.slice(0, 100) });
-					trace.cache_hit = true;
-					trace.record_decision('cache_hit', { query: query.slice(0, 100) });
-					trace.flush_background(cached);
-					return cached;
-				}
-			} catch { /* cache miss or read error — proceed normally */ }
-		}
-
 		const abort_controller = new AbortController();
 		const tasks = build_tasks(ai_search_ref, web_search_ref, fetch_ref, query, abort_controller.signal);
 		if (tasks.length === 0) {
@@ -374,26 +328,6 @@ export const run_answer_fanout = async (
 			providers_succeeded: result.providers_succeeded.length,
 			providers_failed: result.providers_failed.length,
 		});
-
-		// Await KV write — prevents REST path from killing the promise after response is sent.
-		// Only cache COMPLETE fanouts (no failed providers, no timed-out providers).
-		// A partial result with one transient kimi 524 would otherwise lock that one-provider-
-		// short answer in for 36 hours, preventing retry once the upstream recovers.
-		const is_complete_fanout = result.answers.length > 0 && result.providers_failed.length === 0;
-		if (kv_cache && is_complete_fanout) {
-			try {
-				const answer_write_key = await hash_key('answer:', query);
-				await kv_cache.put(answer_write_key, JSON.stringify(result), { expirationTtl: KV_ANSWER_TTL_SECONDS });
-			} catch (err) {
-				logger.warn('KV answer cache write failed', { op: 'kv_write_error', error: err instanceof Error ? err.message : String(err) });
-			}
-		} else if (kv_cache && result.answers.length > 0) {
-			logger.debug('Skipping answer cache write (partial fanout)', {
-				op: 'answer_cache_skip_partial',
-				succeeded: result.answers.length,
-				failed: result.providers_failed.length,
-			});
-		}
 
 		trace.flush_background(result);
 		return result;
