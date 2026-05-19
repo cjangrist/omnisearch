@@ -16,6 +16,10 @@ const logger = loggers.search();
 const DEFAULT_TOP_N = 20;
 const GROUNDING_TOP_N = 20;
 const KV_SEARCH_TTL_SECONDS = 129_600; // 36 hours
+// Disable cache for grounded fanouts during prompt iteration: cached results
+// embed LLM-generated snippets, so cache hits serve stale prompt outputs and
+// hide the effect of prompt edits. Re-enable when the prompt is stable.
+const GROUNDED_RESULT_CACHE_ENABLED = false;
 const VALID_SNIPPET_SOURCES: ReadonlySet<SnippetSource> = new Set<SnippetSource>(['aggregated', 'grounded', 'fallback']);
 
 const make_cache_key = (query: string, options?: { skip_quality_filter?: boolean; grounded?: boolean }): Promise<string> => {
@@ -256,8 +260,9 @@ export const run_web_search_fanout = async (
 		// Return cached result if available (deduplicates gemini-grounded web search inside answer fanout).
 		// Defense-in-depth: also require cached.query === query so a SHA-256-collision-defying
 		// future bug couldn't silently serve a different query's results.
+		const cache_read_enabled = !want_grounding || GROUNDED_RESULT_CACHE_ENABLED;
 		const cache_key = await make_cache_key(query, { skip_quality_filter: options?.skip_quality_filter, grounded: want_grounding });
-		const cached_raw = await get_cached(cache_key);
+		const cached_raw = cache_read_enabled ? await get_cached(cache_key) : undefined;
 		const cached = cached_raw && cached_raw.query === query ? cached_raw : undefined;
 		if (cached) {
 			logger.debug('Returning cached fanout result', { op: 'fanout_cache_hit', query: query.slice(0, 100), grounded: want_grounding });
@@ -370,8 +375,15 @@ export const run_web_search_fanout = async (
 		// gemini-grounded — would poison the shared cache key with a one-provider
 		// result that subsequent unconstrained /search calls would receive for 36h.
 		const is_complete_fanout = providers_succeeded.length > 0 && providers_failed.length === 0;
-		if (is_complete_fanout) {
+		const cache_write_enabled = !want_grounding || GROUNDED_RESULT_CACHE_ENABLED;
+		if (is_complete_fanout && cache_write_enabled) {
 			await set_cached(cache_key, result);
+		} else if (providers_succeeded.length > 0 && !cache_write_enabled) {
+			logger.debug('Skipping search cache write (grounded cache disabled)', {
+				op: 'search_cache_skip_grounded_disabled',
+				succeeded: providers_succeeded.length,
+				failed: providers_failed.length,
+			});
 		} else if (providers_succeeded.length > 0) {
 			logger.debug('Skipping search cache write (partial fanout)', {
 				op: 'search_cache_skip_partial',
