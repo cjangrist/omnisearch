@@ -92,15 +92,22 @@ Hard cap: 2000 chars. Don't pad — a 5-line StackOverflow answer is a 4-sentenc
 FORMAT NOTES:
   • Markdown is encouraged where it adds clarity: code blocks, inline code, occasional bold for key product names. Don't bold every proper noun.
   • Direct quotes ("…") when exact wording is the substance.
+  • End every snippet with one final line in this exact form, on its own line, no bullet, no markdown, ≤200 chars total:
+      Coverage: answers <X>; does NOT cover <Y>.
+    where <X> is a short clause naming what the snippet+page resolve for the query, and <Y> is the most important query-relevant thing the page does NOT contain. If the page fully covers every facet of the query, write: Coverage: answers <X>; does NOT cover —. Examples:
+      Coverage: answers Bearer-token format and required scopes; does NOT cover rate-limit headers or rotation cadence.
+      Coverage: answers the release date and per-token pricing; does NOT cover context-window size.
+      Coverage: answers the canonical kubectl command and the annotation it sets; does NOT cover —.
+    Do NOT add a Coverage line when returning a SENTINEL — sentinels stand alone.
 
-SENTINELS — when the page genuinely lacks usable content for the query, return ONLY one of these exact bracketed strings, with no other commentary:
+SENTINELS — when the FETCH produced no real page content for ANY query (404, nav-only, login wall, JS shell), return ONLY one of these exact bracketed strings, with no other commentary and no Coverage line:
   • [no usable content] — body is HTML/JS/garbage with no human-readable text
   • [navigation only] — homepage, category index, or nav/footer with no query-relevant body
   • [page not found] — body is a 404 / "page does not exist" notice
   • [search results page] — body is itself a search results page, not an article
   • [login required] — body is a login wall
 
-Use a sentinel ONLY when the page genuinely lacks content. Search engines already filtered for relevance, so most pages DO have something to describe — never use a sentinel as a shortcut on a hard page.`;
+Sentinels are for the case where the FETCH produced no real page content. If the page has real content but does not directly answer the query, you still write a normal snippet describing what the page IS about and let the Coverage line flag the mismatch (e.g. "Coverage: answers the related concept of X; does NOT cover the specific Y the query asks about."). Search engines already filtered for relevance, so most pages DO have something to describe — never use a sentinel as a shortcut on a hard page.`;
 
 // Patterns that indicate the fetched body is a paywall / login-wall /
 // cookie-wall / bot-challenge / JS-required shell rather than real page
