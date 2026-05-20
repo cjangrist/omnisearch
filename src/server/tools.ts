@@ -55,6 +55,10 @@ class ToolRegistry {
 		return this.web_search_provider;
 	}
 
+	get_ai_search_provider() {
+		return this.ai_search_provider;
+	}
+
 	get_fetch_provider() {
 		return this.fetch_provider;
 	}
@@ -78,18 +82,28 @@ class ToolRegistry {
 	}
 
 	setup_tool_handlers(server: McpServer, get_ctx: CtxGetter = noop_ctx_getter) {
-		if (this.web_search_provider) {
-			this.register_web_search_tool(server, this.web_search_provider, get_ctx);
+		// Snapshot the singleton provider refs at registration time. Tool callbacks
+		// MUST NOT read `this.X` at request time — `this` is the module-scoped
+		// `registry` shared across DO instances in the same isolate, and a
+		// concurrent DO's `initialize_providers()` overwrites these fields with
+		// fresh Unified* instances mid-flight. Snapshotting binds each McpServer's
+		// handlers to the provider refs that existed when the handlers were
+		// registered. (Companion to the prior get_ctx capture fix, d4279cd.)
+		const web_ref = this.web_search_provider;
+		const ai_ref = this.ai_search_provider;
+		const fetch_ref = this.fetch_provider;
+		if (web_ref) {
+			this.register_web_search_tool(server, web_ref, fetch_ref, get_ctx);
 		}
-		if (this.ai_search_provider) {
-			this.register_answer_tool(server, this.ai_search_provider, this.web_search_provider, get_ctx);
+		if (ai_ref) {
+			this.register_answer_tool(server, ai_ref, web_ref, fetch_ref, get_ctx);
 		}
-		if (this.fetch_provider) {
-			this.register_fetch_tool(server, this.fetch_provider, get_ctx);
+		if (fetch_ref) {
+			this.register_fetch_tool(server, fetch_ref, get_ctx);
 		}
 	}
 
-	private register_web_search_tool(server: McpServer, web_ref: UnifiedWebSearchProvider, get_ctx: CtxGetter) {
+	private register_web_search_tool(server: McpServer, web_ref: UnifiedWebSearchProvider, fetch_ref: UnifiedFetchProvider | undefined, get_ctx: CtxGetter) {
 		server.registerTool(
 			'web_search',
 			{
@@ -133,7 +147,7 @@ Snippets are grounded by default: after ranking, the top-20 URLs are fetched in 
 					const result = await run_web_search_fanout(web_ref, query, {
 						timeout_ms,
 						grounded_snippets,
-						fetch_provider: this.fetch_provider,
+						fetch_provider: fetch_ref,
 					});
 					return this.format_web_search_response(query, result, include_snippets);
 				} catch (error) {
@@ -147,6 +161,7 @@ Snippets are grounded by default: after ranking, the top-20 URLs are fetched in 
 		server: McpServer,
 		ai_ref: UnifiedAISearchProvider,
 		web_ref: UnifiedWebSearchProvider | undefined,
+		fetch_ref: UnifiedFetchProvider | undefined,
 		get_ctx: CtxGetter,
 	) {
 		server.registerTool(
@@ -181,7 +196,7 @@ IMPORTANT: This tool fans out to many providers and can take up to 2 minutes to 
 			},
 			async ({ query }) => with_ctx_scope(get_ctx, () => run_with_request_id(crypto.randomUUID(), async () => {
 				try {
-					const answer_result = await run_answer_fanout(ai_ref, web_ref, this.fetch_provider, query);
+					const answer_result = await run_answer_fanout(ai_ref, web_ref, fetch_ref, query);
 					if (!answer_result) {
 						return {
 							content: [{ type: 'text' as const, text: 'No AI providers configured. Set API keys for at least one AI response provider.' }],
@@ -344,6 +359,7 @@ Note: setting skip_providers also (a) bypasses the 36-hour KV cache and (b) fetc
 const registry = new ToolRegistry();
 
 export const get_web_search_provider = () => registry.get_web_search_provider();
+export const get_ai_search_provider = () => registry.get_ai_search_provider();
 export const get_fetch_provider = () => registry.get_fetch_provider();
 export const reset_registry = () => { registry.reset(); };
 export const register_tools = (server: McpServer, get_ctx?: CtxGetter) => { registry.setup_tool_handlers(server, get_ctx); };
