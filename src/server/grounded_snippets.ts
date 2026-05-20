@@ -556,13 +556,33 @@ const fetch_then_ground = async (
 
 // ── Public entry ─────────────────────────────────────────────────────────────
 
+export interface GroundingStats {
+	transient_fail_count: number;
+	grounded_count: number;
+	total_urls: number;
+}
+
+export interface GroundingOutput {
+	results: RankedWebResult[];
+	stats: GroundingStats;
+}
+
+// Outcomes that indicate transient infra failure (NOT durable page/URL state).
+// Used by callers to decide whether to cache the fanout result — a fanout where
+// Groq blipped or workers got rejected should not be cached as the steady-state
+// answer because the 36h TTL would mask recovery.
+const TRANSIENT_GROUNDING_OUTCOMES: ReadonlySet<GroundingOutcome> = new Set<GroundingOutcome>([
+	'fallback:groq_error',
+	'fallback:pipeline_timeout',
+]);
+
 export const ground_top_results = async (
 	query: string,
 	results: RankedWebResult[],
 	fetch_provider: UnifiedFetchProvider,
 	signal?: AbortSignal,
-): Promise<RankedWebResult[]> => {
-	if (results.length === 0) return results;
+): Promise<GroundingOutput> => {
+	if (results.length === 0) return { results, stats: { transient_fail_count: 0, grounded_count: 0, total_urls: 0 } };
 
 	const cfg = config.snippet_grounding.groq;
 	const aggregate_t0 = Date.now();
@@ -635,6 +655,14 @@ export const ground_top_results = async (
 		}
 	}
 
+	// worker_rejected is also transient (orchestration race, not durable URL state)
+	// but it's logged from the catch branch above rather than as a GroundingOutcome
+	// value. Sum it in explicitly so the cache gate sees it.
+	let transient_fail_count = outcome_counts['fallback:worker_rejected'] ?? 0;
+	for (const outcome of TRANSIENT_GROUNDING_OUTCOMES) {
+		transient_fail_count += outcome_counts[outcome] ?? 0;
+	}
+
 	const sorted_durations = [...durations].sort((a, b) => a - b);
 	const total_duration_ms = Date.now() - aggregate_t0;
 	const aggregate = {
@@ -663,5 +691,12 @@ export const ground_top_results = async (
 	logger.info('Grounding aggregate', aggregate);
 	trace?.record_decision('grounding_aggregate', aggregate);
 
-	return final_results;
+	return {
+		results: final_results,
+		stats: {
+			transient_fail_count,
+			grounded_count,
+			total_urls: settled.length,
+		},
+	};
 };

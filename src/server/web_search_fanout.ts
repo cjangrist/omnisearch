@@ -332,11 +332,14 @@ export const run_web_search_fanout = async (
 		// breaks the result set. Gated on want_grounding (default true when
 		// GROQ_API_KEY is set and a fetch_provider was threaded through).
 		let web_results = ranked_results;
+		let grounding_transient_fail_count = 0;
 		if (want_grounding && options?.fetch_provider && ranked_results.length > 0) {
 			const { results: top, truncation } = truncate_web_results(ranked_results, GROUNDING_TOP_N);
 			trace.record_decision('grounding_start', { top_n: top.length, truncation });
 			const grounding_t0 = Date.now();
-			const grounded_top = await ground_top_results(query, top, options.fetch_provider, options.signal);
+			const grounded_output = await ground_top_results(query, top, options.fetch_provider, options.signal);
+			const grounded_top = grounded_output.results;
+			grounding_transient_fail_count = grounded_output.stats.transient_fail_count;
 			const grounded_urls = new Set(grounded_top.map((r) => r.url));
 			const ungrounded_remainder = ranked_results.filter((r) => !grounded_urls.has(r.url));
 			web_results = [...grounded_top, ...ungrounded_remainder];
@@ -345,6 +348,7 @@ export const run_web_search_fanout = async (
 				grounded: grounded_top.filter((r) => r.snippet_source === 'grounded').length,
 				fallback: grounded_top.filter((r) => r.snippet_source === 'fallback').length,
 				total: grounded_top.length,
+				transient_fail_count: grounding_transient_fail_count,
 			});
 		}
 
@@ -374,7 +378,20 @@ export const run_web_search_fanout = async (
 		// Otherwise a partial — including timeout-limited internal calls from
 		// gemini-grounded — would poison the shared cache key with a one-provider
 		// result that subsequent unconstrained /search calls would receive for 36h.
-		const is_complete_fanout = providers_succeeded.length > 0 && providers_failed.length === 0;
+		//
+		// "Complete" now includes the grounding stage when want_grounding is true:
+		// an all-fallback grounding (every URL hit groq_error / pipeline_timeout /
+		// worker_rejected) used to pass this gate because grounding failures don't
+		// appear in providers_failed, only in snippet_source. The result would be
+		// cached as the steady-state answer for 36h, masking Groq/worker recovery.
+		// hh round 2026-05-20: 4-of-6 reviewer consensus. Conservative threshold —
+		// any transient grounding failure blocks the write; pure URL-level junk
+		// (paywall / 404 / login wall) is still cacheable because that's a durable
+		// property of the URL, not a transient infra blip.
+		const grounding_complete = !want_grounding || grounding_transient_fail_count === 0;
+		const is_complete_fanout = providers_succeeded.length > 0
+			&& providers_failed.length === 0
+			&& grounding_complete;
 		const cache_write_enabled = !want_grounding || GROUNDED_RESULT_CACHE_ENABLED;
 		if (is_complete_fanout && cache_write_enabled) {
 			await set_cached(cache_key, result);
@@ -383,6 +400,13 @@ export const run_web_search_fanout = async (
 				op: 'search_cache_skip_grounded_disabled',
 				succeeded: providers_succeeded.length,
 				failed: providers_failed.length,
+			});
+		} else if (providers_succeeded.length > 0 && !grounding_complete) {
+			logger.debug('Skipping search cache write (grounding transient failures)', {
+				op: 'search_cache_skip_grounding_transient',
+				succeeded: providers_succeeded.length,
+				failed: providers_failed.length,
+				transient_fail_count: grounding_transient_fail_count,
 			});
 		} else if (providers_succeeded.length > 0) {
 			logger.debug('Skipping search cache write (partial fanout)', {
