@@ -16,10 +16,12 @@ const logger = loggers.search();
 const DEFAULT_TOP_N = 20;
 const GROUNDING_TOP_N = 20;
 const KV_SEARCH_TTL_SECONDS = 129_600; // 36 hours
-// Disable cache for grounded fanouts during prompt iteration: cached results
-// embed LLM-generated snippets, so cache hits serve stale prompt outputs and
-// hide the effect of prompt edits. Re-enable when the prompt is stable.
-const GROUNDED_RESULT_CACHE_ENABLED = false;
+// Re-enabled 2026-05-20 after the snippet prompt stabilized (Phases 1-3) AND
+// the two HIGH caching-correctness fixes from the hh review landed (paywall
+// poisoning in is_fetch_failure, transient-grounding gating in is_complete_fanout).
+// Cached payloads embed LLM-generated snippets; flip back to false during any
+// future prompt iteration so cache hits don't mask in-flight prompt edits.
+const GROUNDED_RESULT_CACHE_ENABLED = true;
 const VALID_SNIPPET_SOURCES: ReadonlySet<SnippetSource> = new Set<SnippetSource>(['aggregated', 'grounded', 'fallback']);
 
 const make_cache_key = (query: string, options?: { skip_quality_filter?: boolean; grounded?: boolean }): Promise<string> => {
