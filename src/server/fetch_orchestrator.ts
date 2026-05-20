@@ -18,6 +18,7 @@ import {
 import { kv_cache } from '../config/env.js';
 import { hash_key } from '../common/utils.js';
 import { TraceContext, get_active_trace, run_with_trace } from '../common/r2_trace.js';
+import { detect_grounded_junk } from './grounded_prompts.js';
 
 const logger = loggers.fetch();
 
@@ -174,7 +175,19 @@ const is_fetch_failure = (result: FetchResult, provider?: string): boolean => {
 	if (provider && API_NATIVE_PROVIDERS.has(provider)) return false;
 	if (result.content.length < CONFIG.failure.min_content_chars) return true;
 	const lower = result.content.toLowerCase();
-	return CONFIG.failure.challenge_patterns.some((p) => lower.includes(p.toLowerCase()));
+	if (CONFIG.failure.challenge_patterns.some((p) => lower.includes(p.toLowerCase()))) return true;
+	// Paywall / login-wall / cookie-wall / JS-shell bodies pass the basic
+	// challenge_patterns gate (paywalls aren't bot challenges) but the
+	// downstream grounded pipeline already knows they're junk via
+	// detect_grounded_junk. Without this check, the waterfall caches such
+	// bodies at run_fetch_race's build_and_cache, then the grounded retry
+	// path correctly bypasses cache writes — leaving the poisoned attempt-1
+	// entry in KV for the 36h TTL with no overwrite path. Cross-request data
+	// corruption: every subsequent /fetch MCP/REST call for the same URL
+	// receives the paywall body. Sharing the detector keeps the gate aligned
+	// in one place. (hh round 2026-05-20: claude/codex/gemini consensus.)
+	if (detect_grounded_junk(result.content)) return true;
+	return false;
 };
 
 // ── Domain breaker detection ─────────────────────────────────────
