@@ -3,7 +3,9 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { create_error_response } from '../common/utils.js';
-import { run_with_request_id } from '../common/logger.js';
+import { loggers, run_with_request_id } from '../common/logger.js';
+
+const tool_logger = loggers.mcp();
 import type {
 	UnifiedWebSearchProvider,
 } from '../providers/unified/web_search.js';
@@ -142,18 +144,31 @@ Snippets are grounded by default: after ranking, the top-20 URLs are fetched in 
 					})),
 				},
 			},
-			async ({ query, timeout_ms, include_snippets, grounded_snippets }) => with_ctx_scope(get_ctx, () => run_with_request_id(crypto.randomUUID(), async () => {
-				try {
-					const result = await run_web_search_fanout(web_ref, query, {
+			async ({ query, timeout_ms, include_snippets, grounded_snippets }) => with_ctx_scope(get_ctx, () => {
+				const request_id = crypto.randomUUID();
+				return run_with_request_id(request_id, async () => {
+					tool_logger.info('web_search tool invoked', {
+						op: 'tool_invoke',
+						tool: 'web_search',
+						request_id,
+						query,
+						query_len: query.length,
 						timeout_ms,
+						include_snippets,
 						grounded_snippets,
-						fetch_provider: fetch_ref,
 					});
-					return this.format_web_search_response(query, result, include_snippets);
-				} catch (error) {
-					return this.format_error(error as Error);
-				}
-			})),
+					try {
+						const result = await run_web_search_fanout(web_ref, query, {
+							timeout_ms,
+							grounded_snippets,
+							fetch_provider: fetch_ref,
+						});
+						return this.format_web_search_response(query, result, include_snippets);
+					} catch (error) {
+						return this.format_error(error as Error);
+					}
+				});
+			}),
 		);
 	}
 
@@ -194,31 +209,41 @@ IMPORTANT: This tool fans out to many providers and can take up to 2 minutes to 
 					})),
 				},
 			},
-			async ({ query }) => with_ctx_scope(get_ctx, () => run_with_request_id(crypto.randomUUID(), async () => {
-				try {
-					const answer_result = await run_answer_fanout(ai_ref, web_ref, fetch_ref, query);
-					if (!answer_result) {
-						return {
-							content: [{ type: 'text' as const, text: 'No AI providers configured. Set API keys for at least one AI response provider.' }],
-							isError: true,
-						};
-					}
-					if (answer_result.answers.length === 0) {
+			async ({ query }) => with_ctx_scope(get_ctx, () => {
+				const request_id = crypto.randomUUID();
+				return run_with_request_id(request_id, async () => {
+					tool_logger.info('answer tool invoked', {
+						op: 'tool_invoke',
+						tool: 'answer',
+						request_id,
+						query,
+						query_len: query.length,
+					});
+					try {
+						const answer_result = await run_answer_fanout(ai_ref, web_ref, fetch_ref, query);
+						if (!answer_result) {
+							return {
+								content: [{ type: 'text' as const, text: 'No AI providers configured. Set API keys for at least one AI response provider.' }],
+								isError: true,
+							};
+						}
+						if (answer_result.answers.length === 0) {
+							const text = JSON.stringify(answer_result, null, 2);
+							return {
+								content: [{ type: 'text' as const, text: `All ${answer_result.providers_failed.length} providers failed. Details:\n${text}` }],
+								isError: true,
+							};
+						}
 						const text = JSON.stringify(answer_result, null, 2);
 						return {
-							content: [{ type: 'text' as const, text: `All ${answer_result.providers_failed.length} providers failed. Details:\n${text}` }],
-							isError: true,
+							structuredContent: answer_result as unknown as Record<string, unknown>,
+							content: [{ type: 'text' as const, text }],
 						};
+					} catch (error) {
+						return this.format_error(error as Error);
 					}
-					const text = JSON.stringify(answer_result, null, 2);
-					return {
-						structuredContent: answer_result as unknown as Record<string, unknown>,
-						content: [{ type: 'text' as const, text }],
-					};
-				} catch (error) {
-					return this.format_error(error as Error);
-				}
-			})),
+				});
+			}),
 		);
 	}
 
