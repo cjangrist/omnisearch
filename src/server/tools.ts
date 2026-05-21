@@ -144,13 +144,15 @@ Snippets are grounded by default: after ranking, the top-20 URLs are fetched in 
 					})),
 				},
 			},
-			async ({ query, timeout_ms, include_snippets, grounded_snippets }) => with_ctx_scope(get_ctx, () => {
+			async ({ query, timeout_ms, include_snippets, grounded_snippets }, extra) => with_ctx_scope(get_ctx, () => {
 				const request_id = crypto.randomUUID();
 				return run_with_request_id(request_id, async () => {
 					tool_logger.info('web_search tool invoked', {
 						op: 'tool_invoke',
 						tool: 'web_search',
 						request_id,
+						jsonrpc_id: extra?.requestId ?? null,
+						session_id: extra?.sessionId ?? null,
 						query,
 						query_len: query.length,
 						timeout_ms,
@@ -209,13 +211,15 @@ IMPORTANT: This tool fans out to many providers and can take up to 2 minutes to 
 					})),
 				},
 			},
-			async ({ query }) => with_ctx_scope(get_ctx, () => {
+			async ({ query }, extra) => with_ctx_scope(get_ctx, () => {
 				const request_id = crypto.randomUUID();
 				return run_with_request_id(request_id, async () => {
 					tool_logger.info('answer tool invoked', {
 						op: 'tool_invoke',
 						tool: 'answer',
 						request_id,
+						jsonrpc_id: extra?.requestId ?? null,
+						session_id: extra?.sessionId ?? null,
 						query,
 						query_len: query.length,
 					});
