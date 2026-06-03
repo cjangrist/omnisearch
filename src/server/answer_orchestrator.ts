@@ -13,7 +13,10 @@ import { TraceContext, get_active_trace, run_with_trace } from '../common/r2_tra
 
 const logger = loggers.aiResponse();
 
-const GLOBAL_TIMEOUT_MS = 295_000; // 4m55s hard deadline for the entire fanout
+// 4m30s hard deadline for the entire fanout. Lowered from 295s so the
+// response always lands inside the Claude.ai client's 300s ClientRequest
+// budget — even with SSE flush, CF edge transit, and any cold-start jitter.
+const GLOBAL_TIMEOUT_MS = 270_000;
 const PROGRESS_INTERVAL_MS = 5_000;
 
 interface ProviderTask {
