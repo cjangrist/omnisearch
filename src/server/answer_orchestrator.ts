@@ -289,7 +289,7 @@ export const run_answer_fanout = async (
 				query: query.slice(0, 100),
 			});
 			trace.record_decision('no_providers_available', {});
-			trace.flush_background(null);
+			await trace.flush_inline(null);
 			return null;
 		}
 
@@ -332,7 +332,12 @@ export const run_answer_fanout = async (
 			providers_failed: result.providers_failed.length,
 		});
 
-		trace.flush_background(result);
+		// Inline-await the trace write so it survives a client disconnect.
+		// On a 295s-edge answer call, ctx.waitUntil is at risk of CF eviction
+		// when the client drops the SSE socket at its 300s deadline — losing
+		// the trace entirely. The R2 PUT is ~50-200ms and _write_to_r2
+		// swallows its own errors, so this can't fail the response.
+		await trace.flush_inline(result);
 		return result;
 	});
 };
