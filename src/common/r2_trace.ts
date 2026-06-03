@@ -178,6 +178,16 @@ export class TraceContext {
 		}
 	}
 
+	// Awaited R2 write — adds ~50-200ms to the critical path but the trace
+	// survives a client disconnect. Use for long-running tools (answer) whose
+	// waitUntil queue is at risk of CF eviction when the SSE socket drops past
+	// the client's deadline. _write_to_r2 swallows its own errors, so a failed
+	// R2 PUT will not break the response.
+	async flush_inline(final_result: unknown): Promise<void> {
+		if (!_r2_bucket) return;
+		await this._write_to_r2(final_result);
+	}
+
 	private async _write_to_r2(final_result: unknown): Promise<void> {
 		if (!_r2_bucket) return;
 
