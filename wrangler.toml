@@ -2,9 +2,18 @@ name = "omnisearch-mcp"
 main = "src/worker.ts"
 compatibility_date = "2026-02-24"
 compatibility_flags = ["nodejs_compat"]
+workers_dev = true
 
 [observability]
 enabled = true
+
+[observability.traces]
+enabled = true
+destinations = ["grafana"]
+
+[observability.logs]
+enabled = true
+destinations = ["grafana-logs"]
 
 [[durable_objects.bindings]]
 name = "OmnisearchMCP"
@@ -17,6 +26,10 @@ id = "d8b1130bed234c308a15316a5dfc15a8"
 [[r2_buckets]]
 binding = "TRACE_BUCKET"
 bucket_name = "omnisearch"
+
+[[routes]]
+pattern = "omnisearch.angrist.net/*"
+zone_name = "angrist.net"
 
 [[migrations]]
 tag = "v1"
