@@ -264,10 +264,11 @@ export async function fetch_commit(token: string, owner: string, repo: string, s
 }
 
 export async function fetch_user_profile(token: string, username: string): Promise<FetchResult> {
-	const [user, repos] = await Promise.all([
-		github_get<GitHubAny>(token, `/users/${username}`),
-		github_get_safe<GitHubAny[]>(token, `/users/${username}/repos?sort=updated&per_page=10`),
-	]);
+	const user = await github_get<GitHubAny>(token, `/users/${username}`);
+	const repos_endpoint = (user.type as string) === 'Organization'
+		? `/orgs/${username}/repos?sort=updated&per_page=${LIST_PER_PAGE}`
+		: `/users/${username}/repos?sort=updated&per_page=${LIST_PER_PAGE}`;
+	const repos = await github_get_safe<GitHubAny[]>(token, repos_endpoint);
 
 	let content = `# ${user.name || user.login}\n\n`;
 	if (user.bio) content += `> ${user.bio}\n\n`;
@@ -285,11 +286,13 @@ export async function fetch_user_profile(token: string, username: string): Promi
 	content += `\n`;
 
 	if (repos && repos.length > 0) {
-		content += `## Recent Repositories\n\n| Repo | Stars | Language | Description |\n|------|-------|----------|-------------|\n`;
+		const truncated_note = repos.length >= LIST_PER_PAGE ? ' (showing first 100 — more may exist)' : '';
+		content += `## Repositories\n\n| Repo | Stars | Language | Description |\n|------|-------|----------|-------------|\n`;
 		for (const r of repos) {
 			const desc = escape_table_cell(((r.description as string) ?? '').slice(0, 60));
 			content += `| [${escape_table_cell(r.name as string)}](${r.html_url}) | ${r.stargazers_count} | ${r.language || '-'} | ${desc} |\n`;
 		}
+		if (truncated_note) content += `\n_${truncated_note}_\n`;
 	}
 	content += `\n---\n*Fetched via GitHub API*\n`;
 
