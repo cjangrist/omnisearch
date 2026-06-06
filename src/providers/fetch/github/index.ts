@@ -13,6 +13,7 @@ import {
 	fetch_pull_request, fetch_release_list, fetch_release, fetch_release_latest,
 	fetch_commit_list, fetch_commit, fetch_user_profile, fetch_gist, fetch_actions,
 } from './handlers.js';
+import { fetch_raw_file } from './handlers-file.js';
 
 const logger = loggers.fetch();
 
@@ -76,7 +77,7 @@ export class GitHubFetchProvider implements FetchProvider {
 				case 'gist':
 					return await fetch_gist(token, parsed.resource_id!);
 				case 'raw_file':
-					return await fetch_file(token, parsed.owner!, parsed.repo!, parsed.ref, parsed.path);
+					return await fetch_raw_file(token, parsed.owner!, parsed.repo!, parsed.ref, parsed.path);
 				case 'compare':
 				case 'discussion':
 				case 'discussion_list':

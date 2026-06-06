@@ -246,6 +246,8 @@ const run_solo = async (ctx: StepContext, provider: string): Promise<FetchResult
 		const error_msg = error instanceof Error ? error.message : String(error);
 		ctx.failed.push({ provider, error: error_msg, duration_ms });
 		trace?.record_provider_error(provider, error_msg, duration_ms);
+		// INVALID_INPUT = resource definitively absent (e.g. 404 from github provider) — fast-fail the waterfall
+		if (error instanceof ProviderError && error.type === ErrorType.INVALID_INPUT) throw error;
 		return undefined;
 	}
 };
@@ -579,50 +581,60 @@ export const run_fetch_race = async (
 		const target_count = Math.min(has_skip_providers ? 2 : 1, active.size);
 		const winners: Array<{ provider: string; result: FetchResult }> = [];
 
-		// Breakers: domain-specific providers tried before the waterfall
-		for (const [breaker_name, breaker_config] of Object.entries(CONFIG.breakers)) {
-			if (winners.length >= target_count) break;
-			if (matches_breaker(url, breaker_config)) {
-				if (!active.has(breaker_config.provider)) {
-					// Domain matched but the breaker provider is in skip_set
-					// (or has no key). Record so trace makes the bypass visible.
-					trace.record_decision('breaker_skipped', {
+		try {
+			// Breakers: domain-specific providers tried before the waterfall
+			for (const [breaker_name, breaker_config] of Object.entries(CONFIG.breakers)) {
+				if (winners.length >= target_count) break;
+				if (matches_breaker(url, breaker_config)) {
+					if (!active.has(breaker_config.provider)) {
+						// Domain matched but the breaker provider is in skip_set
+						// (or has no key). Record so trace makes the bypass visible.
+						trace.record_decision('breaker_skipped', {
+							breaker: breaker_name,
+							provider: breaker_config.provider,
+							reason: skip_set.has(breaker_config.provider) ? 'in_skip_set' : 'inactive',
+						});
+						continue;
+					}
+					trace.record_decision('breaker_match', { breaker: breaker_name, provider: breaker_config.provider });
+					logger.info('Breaker matched', {
+						op: 'breaker_match',
 						breaker: breaker_name,
 						provider: breaker_config.provider,
-						reason: skip_set.has(breaker_config.provider) ? 'in_skip_set' : 'inactive',
+						url: url.slice(0, 200),
 					});
-					continue;
-				}
-				trace.record_decision('breaker_match', { breaker: breaker_name, provider: breaker_config.provider });
-				logger.info('Breaker matched', {
-					op: 'breaker_match',
-					breaker: breaker_name,
-					provider: breaker_config.provider,
-					url: url.slice(0, 200),
-				});
-				const breaker_result = await run_solo(ctx, breaker_config.provider);
-				if (breaker_result) {
-					trace.record_decision('breaker_resolved', { breaker: breaker_name, provider: breaker_config.provider });
-					winners.push({ provider: breaker_config.provider, result: breaker_result });
-				} else {
-					trace.record_decision('breaker_fallthrough', { breaker: breaker_name });
-					logger.warn('Breaker failed, continuing', { op: 'breaker_fallthrough', breaker: breaker_name });
+					const breaker_result = await run_solo(ctx, breaker_config.provider);
+					if (breaker_result) {
+						trace.record_decision('breaker_resolved', { breaker: breaker_name, provider: breaker_config.provider });
+						winners.push({ provider: breaker_config.provider, result: breaker_result });
+					} else {
+						trace.record_decision('breaker_fallthrough', { breaker: breaker_name });
+						logger.warn('Breaker failed, continuing', { op: 'breaker_fallthrough', breaker: breaker_name });
+					}
 				}
 			}
-		}
 
-		// Waterfall: walk steps top-to-bottom
-		for (const step of CONFIG.waterfall) {
-			if (winners.length >= target_count) break;
-			const step_label = 'solo' in step ? `solo:${step.solo}` : 'parallel' in step ? `parallel:${step.parallel.join(',')}` : `sequential:${step.sequential.join(',')}`;
-			trace.record_decision('waterfall_step', { step: step_label });
-
-			const remaining = target_count - winners.length;
-			const step_winners = await execute_step(ctx, step, remaining);
-			for (const w of step_winners) {
-				winners.push(w);
+			// Waterfall: walk steps top-to-bottom
+			for (const step of CONFIG.waterfall) {
 				if (winners.length >= target_count) break;
+				const step_label = 'solo' in step ? `solo:${step.solo}` : 'parallel' in step ? `parallel:${step.parallel.join(',')}` : `sequential:${step.sequential.join(',')}`;
+				trace.record_decision('waterfall_step', { step: step_label });
+
+				const remaining = target_count - winners.length;
+				const step_winners = await execute_step(ctx, step, remaining);
+				for (const w of step_winners) {
+					winners.push(w);
+					if (winners.length >= target_count) break;
+				}
 			}
+		} catch (error) {
+			// INVALID_INPUT re-thrown by run_solo means the resource definitively doesn't
+			// exist (e.g. 404 from the github breaker). Fast-fail: flush trace and propagate
+			// immediately instead of exhausting the rest of the waterfall.
+			const error_msg = error instanceof Error ? error.message : String(error);
+			trace.record_decision('waterfall_fast_fail', { reason: error_msg, attempted, failed_count: failed.length });
+			trace.flush_background({ error: error_msg, attempted, failed });
+			throw error;
 		}
 
 		// Return collected results

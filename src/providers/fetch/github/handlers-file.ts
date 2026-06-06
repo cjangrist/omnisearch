@@ -1,6 +1,7 @@
 // File, directory, and wiki page handlers
 
 import type { FetchResult } from '../../../common/types.js';
+import { ErrorType, ProviderError } from '../../../common/types.js';
 import { loggers } from '../../../common/logger.js';
 import type { GitHubAny } from './types.js';
 import { github_get, github_get_raw, github_get_safe, github_get_raw_safe } from './api.js';
@@ -118,6 +119,45 @@ export async function fetch_directory(token: string, owner: string, repo: string
 		metadata: { resource_type: 'directory', path: dir_path, ref, item_count: entries.length },
 	};
 }
+export async function fetch_raw_file(
+	token: string,
+	owner: string,
+	repo: string,
+	ref: string | undefined,
+	path: string | undefined,
+): Promise<FetchResult> {
+	if (!ref) {
+		throw new ProviderError(ErrorType.INVALID_INPUT, `Raw URL missing ref: ${owner}/${repo}`, 'github');
+	}
+	const raw_url = path
+		? `https://raw.githubusercontent.com/${owner}/${repo}/${ref}/${path}`
+		: `https://raw.githubusercontent.com/${owner}/${repo}/${ref}`;
+
+	const resp = await fetch(raw_url, {
+		headers: { 'Authorization': `Bearer ${token}`, 'User-Agent': 'omnisearch-mcp/1.0' },
+		signal: AbortSignal.timeout(15_000),
+	});
+
+	if (resp.status === 404) {
+		throw new ProviderError(ErrorType.INVALID_INPUT, `Not found: ${raw_url}`, 'github');
+	}
+	if (!resp.ok) {
+		throw new ProviderError(ErrorType.PROVIDER_ERROR, `GitHub raw fetch failed (${resp.status})`, 'github');
+	}
+
+	const text = await resp.text();
+	const file_ext = (path ?? '').split('.').pop() ?? '';
+	const file_name = path ? (path.split('/').pop() ?? path) : ref;
+
+	return {
+		url: `https://github.com/${owner}/${repo}/blob/${ref}/${path ?? ''}`,
+		title: `${path ?? ref} - ${owner}/${repo}`,
+		content: `# ${file_name}\n\n**Repository:** ${owner}/${repo}\n**Ref:** \`${ref}\`\n**Size:** ${format_size(text.length)}\n\n---\n\n\`\`\`\`\`${file_ext}\n${text}\n\`\`\`\`\`\n\n---\n*Fetched via GitHub raw URL*\n`,
+		source_provider: 'github',
+		metadata: { resource_type: 'raw_file', path, ref },
+	};
+}
+
 export async function fetch_wiki_page(token: string, owner: string, repo: string, page_slug: string): Promise<FetchResult> {
 	const title = decodeURIComponent(page_slug).replace(/-/g, ' ');
 	const url = `https://github.com/${owner}/${repo}/wiki/${page_slug}`;

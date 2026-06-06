@@ -43,9 +43,10 @@ function parse_gist_url(parts: string[]): ParsedGitHubUrl | null {
 }
 
 function parse_raw_url(parts: string[]): ParsedGitHubUrl | null {
-	if (parts.length < 3) return null;
-	const [owner, repo, ...rest] = parts;
-	return { resource_type: 'raw_file', owner, repo, ref: rest.join('/') };
+	if (parts.length < 2) return null;
+	const [owner, repo, ref, ...path_parts] = parts;
+	const path = path_parts.length > 0 ? path_parts.join('/') : undefined;
+	return { resource_type: 'raw_file', owner, repo, ref, path };
 }
 
 function parse_repo_subpath(owner: string, repo: string, rest: string[]): ParsedGitHubUrl {
