@@ -5,7 +5,7 @@ Three dispatchers — `web_search`, `ai_search`, `fetch` — that abstract the r
 ## Files
 
 - **`web_search.ts`** — `UnifiedWebSearchProvider`. `PROVIDERS` array imports every leaf in `../search/` (10 entries: `tavily`, `brave`, `kagi`, `exa`, `firecrawl`, `perplexity`, `serpapi`, `linkup`, `you`, `kimi`). Constructor filters by `key()?.trim()` and instantiates only the active ones. `search({ provider, ...params })` dispatches by name, throwing `INVALID_INPUT` on unknown.
-- **`ai_search.ts`** — `UnifiedAISearchProvider`. `PROVIDERS` includes the 5 named providers (`perplexity`, `kagi_fastgpt`, `exa_answer`, `brave_answer`, `tavily_answer`) plus `...llm_reg` — the spread expands into 4 sub-providers (`chatgpt`, `claude`, `gemini`, `kimi`) all sharing `LLM_SEARCH_BASE_URL` + `LLM_SEARCH_API_KEY`. Total: 9 dispatch entries when all keys set. **Does NOT include `gemini-grounded`** — that one is invoked directly from `answer_orchestrator.ts`.
+- **`ai_search.ts`** — `UnifiedAISearchProvider`. `PROVIDERS` includes the 5 named providers (`perplexity`, `kagi_fastgpt`, `exa_answer`, `brave_answer`, `tavily_answer`) plus `...llm_reg` — the spread expands into 4 sub-providers (`chatgpt`, `claude`, `gemini`, `grok`) all sharing `LLM_SEARCH_BASE_URL` + `LLM_SEARCH_API_KEY`. Total: 9 dispatch entries when all keys set. **Does NOT include `gemini-grounded`** — that one is invoked directly from `answer_orchestrator.ts`.
 - **`fetch.ts`** — `UnifiedFetchProvider`. `PROVIDERS` array has 28 entries — the largest of the three. Constructor filters by `key()?.trim()`. `fetch_url(url, provider)` requires a provider name explicitly (no fallback). Used by `fetch_orchestrator.ts` to call individual providers per waterfall step.
 
 ## How a leaf provider gets registered

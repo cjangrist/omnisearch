@@ -13,7 +13,6 @@ import { config } from '../../../config/env.js';
 
 const MODEL = 'sonar-pro';
 const TEMPERATURE = 0.2;
-const MAX_TOKENS = 1024;
 const RESULT_URL = 'https://perplexity.ai';
 
 interface PerplexityAPIResponse {
@@ -117,7 +116,6 @@ export class PerplexityProvider implements SearchProvider {
 							},
 						],
 						temperature: TEMPERATURE,
-						max_tokens: MAX_TOKENS,
 					}),
 					signal: make_signal(config.ai_response.perplexity.timeout, external_signal),
 				},

@@ -103,16 +103,16 @@ export const GeminiProvider = () => create_llm_provider(
 	() => config.ai_response.gemini,
 );
 
-export const KimiProvider = () => create_llm_provider(
-	'kimi',
-	'Kimi K2 (Moonshot AI) via OpenAI-compatible endpoint. AI-generated answers from a long-context model.',
-	'https://kimi.com',
-	() => config.ai_response.kimi,
+export const GrokProvider = () => create_llm_provider(
+	'grok',
+	'Grok (xAI) via OpenAI-compatible endpoint. AI-generated answers from xAI\'s Grok model.',
+	'https://grok.com',
+	() => config.ai_response.grok,
 );
 
 export const registration = [
 	{ name: 'chatgpt' as const, key: () => (config.ai_response.chatgpt.base_url && config.ai_response.chatgpt.api_key) || undefined, factory: ChatGPTProvider },
 	{ name: 'claude' as const, key: () => (config.ai_response.claude.base_url && config.ai_response.claude.api_key) || undefined, factory: ClaudeProvider },
 	{ name: 'gemini' as const, key: () => (config.ai_response.gemini.base_url && config.ai_response.gemini.api_key) || undefined, factory: GeminiProvider },
-	{ name: 'kimi' as const, key: () => (config.ai_response.kimi.base_url && config.ai_response.kimi.api_key) || undefined, factory: KimiProvider },
+	{ name: 'grok' as const, key: () => (config.ai_response.grok.base_url && config.ai_response.grok.api_key) || undefined, factory: GrokProvider },
 ];
