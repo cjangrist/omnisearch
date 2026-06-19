@@ -12,7 +12,7 @@ Runtime configuration. Populated per-Worker-isolate from Cloudflare Worker env b
 
 ## LLM bridge wiring detail
 
-The OpenAI-compatible LLM bridge (chatgpt / claude / gemini / kimi) requires BOTH `LLM_SEARCH_BASE_URL` AND `LLM_SEARCH_API_KEY`. Without a key, requests fail auth every time, so the wiring deliberately gates on both. Each LLM has an optional model override env var (`LLM_SEARCH_CHATGPT_MODEL`, etc.) — when unset, defaults are `codex/gpt-5.4`, `claude/haiku`, `gemini/search-fast`, `kimi`.
+The OpenAI-compatible LLM bridge (chatgpt / claude / gemini / grok) requires BOTH `LLM_SEARCH_BASE_URL` AND `LLM_SEARCH_API_KEY`. Without a key, requests fail auth every time, so the wiring deliberately gates on both. Each LLM has an optional model override env var (`LLM_SEARCH_CHATGPT_MODEL`, etc.) — when unset, defaults are `codex/gpt-5.4`, `claude/haiku`, `gemini/search-fast`, `grok`.
 
 ## Gemini-grounded wiring detail
 

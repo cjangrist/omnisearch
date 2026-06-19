@@ -10,7 +10,7 @@ Perplexity Sonar Pro answer adapter. Returns a synthesized answer with citations
 - **Auth**: `Authorization: Bearer <PERPLEXITY_API_KEY>`
 - **Env var**: `PERPLEXITY_API_KEY` (shared with `../../search/perplexity/` which uses `sonar`, the cheaper model)
 - **Returns**: `[{ source: 'perplexity', answer, citations: [{ title, url }], duration_ms }]` shaped via `SearchResult` (`snippet` carries the answer; rows for citations).
-- **Model defaults**: `sonar-pro`, temperature 0.2, max_tokens 1024.
+- **Model defaults**: `sonar-pro`, temperature 0.2. No `max_tokens` cap — the full answer is returned untruncated.
 
 ## Conventions / Invariants
 

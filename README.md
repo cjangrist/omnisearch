@@ -227,12 +227,12 @@ Set at least one. Several keys are shared with the corresponding answer / fetch 
 
 | Variable | Provider |
 |----------|----------|
-| `PERPLEXITY_API_KEY` | Perplexity Sonar Pro (1024 max_tokens) |
+| `PERPLEXITY_API_KEY` | Perplexity Sonar Pro |
 | `KAGI_API_KEY` | Kagi FastGPT (~900ms typical) |
 | `EXA_API_KEY` | Exa Answer (livecrawl=fallback) |
 | `BRAVE_ANSWER_API_KEY` | Brave Answer (SSE streaming with inline citation tags) |
 | `TAVILY_API_KEY` | Tavily Answer (`include_answer=advanced`) |
-| `LLM_SEARCH_BASE_URL` + `LLM_SEARCH_API_KEY` | OpenAI-compatible bridge — registers 4 separate provider entries (`chatgpt`, `claude`, `gemini`, `kimi`) sharing the same endpoint. Optional model overrides: `LLM_SEARCH_CHATGPT_MODEL`, `LLM_SEARCH_CLAUDE_MODEL`, `LLM_SEARCH_GEMINI_MODEL`, `LLM_SEARCH_KIMI_MODEL`. |
+| `LLM_SEARCH_BASE_URL` + `LLM_SEARCH_API_KEY` | OpenAI-compatible bridge — registers 4 separate provider entries (`chatgpt`, `claude`, `gemini`, `grok`) sharing the same endpoint. Optional model overrides: `LLM_SEARCH_CHATGPT_MODEL`, `LLM_SEARCH_CLAUDE_MODEL`, `LLM_SEARCH_GEMINI_MODEL`, `LLM_SEARCH_GROK_MODEL`. |
 | `GEMINI_GROUNDED_API_KEY` | Native Gemini API with `url_context` tool — invoked specially: receives `web_search_fanout` results as grounding sources. Optional `GEMINI_GROUNDED_MODEL`. |
 
 ### Fetch providers (28) — `fetch` tool

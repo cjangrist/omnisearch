@@ -9,7 +9,7 @@ Provider adapters for the three tools, plus unified dispatchers and provider-set
 ## Subfolders
 
 - **`search/`** — 11 web-search providers (`tavily`, `brave`, `kagi`, `exa`, `firecrawl`, `perplexity`, `serpapi`, `linkup`, `you`, `kimi`, `parallel`). Each implements `SearchProvider` and exports a `registration` object. See `search/AGENTS.md`.
-- **`ai_response/`** — AI answer providers. 7 leaf folders (`brave_answer`, `exa_answer`, `gemini_grounded`, `kagi_fastgpt`, `llm_search`, `perplexity`, `tavily_answer`) but `llm_search` exports a 4-element `registration` array (chatgpt, claude, gemini, kimi) so the unified registry sees 9 entries. `gemini_grounded` is special — it's invoked directly from `answer_orchestrator.ts`, not via the unified dispatcher. See `ai_response/AGENTS.md`.
+- **`ai_response/`** — AI answer providers. 7 leaf folders (`brave_answer`, `exa_answer`, `gemini_grounded`, `kagi_fastgpt`, `llm_search`, `perplexity`, `tavily_answer`) but `llm_search` exports a 4-element `registration` array (chatgpt, claude, gemini, grok) so the unified registry sees 9 entries. `gemini_grounded` is special — it's invoked directly from `answer_orchestrator.ts`, not via the unified dispatcher. See `ai_response/AGENTS.md`.
 - **`fetch/`** — 28 URL fetch providers. See `fetch/AGENTS.md` for the full list. Most are general-purpose markdown-extractors; three are specialists (github, supadata, sociavault) and run as domain breakers in the waterfall.
 - **`unified/`** — Three dispatchers: `web_search.ts`, `ai_search.ts`, `fetch.ts`. Each imports every leaf module's registration, builds a `PROVIDERS` array, and exposes a `Unified<Category>Provider` class that filters by `key()?.trim()` at construction. See `unified/AGENTS.md`.
 
@@ -58,7 +58,7 @@ const PROVIDERS = [
 ## Gotchas / History
 
 - **`gemini_grounded` is NOT in `unified/ai_search.ts PROVIDERS`** — answer_orchestrator imports it directly. This was a deliberate choice: it composes a `web_search_fanout` with a Gemini call, which doesn't fit the simple `SearchProvider.search(params)` shape.
-- **`llm_search` exports a `registration` array** (not an object) and is spread into `PROVIDERS` via `...llm_reg`. The four sub-providers (chatgpt, claude, gemini, kimi) share `LLM_SEARCH_BASE_URL` + `LLM_SEARCH_API_KEY` but have separate `model` configs and `key()` checks.
+- **`llm_search` exports a `registration` array** (not an object) and is spread into `PROVIDERS` via `...llm_reg`. The four sub-providers (chatgpt, claude, gemini, grok) share `LLM_SEARCH_BASE_URL` + `LLM_SEARCH_API_KEY` but have separate `model` configs and `key()` checks.
 - **`fetch/github` is the largest leaf folder** (11 files): URL parser → resource-type dispatcher → 17 resource handlers + GraphQL fast-path for repo overview. Domain-breaker provider, exempt from the orchestrator's 200-char failure check. See `fetch/github/AGENTS.md`.
 - **`search/kimi` is registered but currently unused** in production (no key set) per the ROI analysis in `docs/kimi-search-roi-analysis.md`. The folder is preserved for re-enablement if the upstream improves. `fetch/kimi` (different code path) is still active.
 

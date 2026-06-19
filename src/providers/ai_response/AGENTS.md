@@ -2,18 +2,18 @@
 
 AI answer providers. Each one accepts a query and returns one or more `SearchResult` rows where the `snippet` field carries the synthesized answer prose and additional rows carry citations. The `answer` MCP tool fans out to all active ones in parallel and returns every provider's answer side-by-side for consensus comparison.
 
-7 leaf folders, but the unified registry has up to 9 dispatch entries — `llm_search/` exports a 4-element registration array (chatgpt, claude, gemini, kimi). `gemini_grounded/` is special: it is invoked directly from the answer orchestrator and never reaches the unified dispatcher.
+7 leaf folders, but the unified registry has up to 9 dispatch entries — `llm_search/` exports a 4-element registration array (chatgpt, claude, gemini, grok). `gemini_grounded/` is special: it is invoked directly from the answer orchestrator and never reaches the unified dispatcher.
 
 ## Subfolders
 
 | Folder | Provider name(s) | Endpoint | Env var | Returns |
 |--------|------------------|----------|---------|---------|
-| [`perplexity/`](perplexity/AGENTS.md) | `perplexity` | `api.perplexity.ai/chat/completions` (sonar-pro) | `PERPLEXITY_API_KEY` | Sonar Pro answer + `citations[]`. 1024 max_tokens. |
+| [`perplexity/`](perplexity/AGENTS.md) | `perplexity` | `api.perplexity.ai/chat/completions` (sonar-pro) | `PERPLEXITY_API_KEY` | Sonar Pro answer + `citations[]`. No output token cap. |
 | [`kagi_fastgpt/`](kagi_fastgpt/AGENTS.md) | `kagi_fastgpt` | `kagi.com/api/v0/fastgpt` | `KAGI_API_KEY` | Single output string + structured `references[]`. ~900ms typical. Bot auth header. |
 | [`exa_answer/`](exa_answer/AGENTS.md) | `exa_answer` | `api.exa.ai/answer` | `EXA_API_KEY` | Synthesized answer + grounded sources. `livecrawl=fallback`, `type=auto`. |
 | [`brave_answer/`](brave_answer/AGENTS.md) | `brave_answer` | `api.search.brave.com/res/v1/...` SSE | `BRAVE_ANSWER_API_KEY` | SSE-streamed answer with inline citation tags + structured citations (separate key from `BRAVE_API_KEY`). |
 | [`tavily_answer/`](tavily_answer/AGENTS.md) | `tavily_answer` | `api.tavily.com/search` (`include_answer=advanced`) | `TAVILY_API_KEY` | Synthesized `answer` + 20 result rows for context. Shared key with search/fetch. |
-| [`llm_search/`](llm_search/AGENTS.md) | `chatgpt`, `claude`, `gemini`, `kimi` | `<LLM_SEARCH_BASE_URL>/chat/completions` | `LLM_SEARCH_BASE_URL` + `LLM_SEARCH_API_KEY` | Generic OpenAI-compatible bridge — registers 4 sub-providers sharing the same endpoint with different model strings. Optional `LLM_SEARCH_<NAME>_MODEL` overrides. |
+| [`llm_search/`](llm_search/AGENTS.md) | `chatgpt`, `claude`, `gemini`, `grok` | `<LLM_SEARCH_BASE_URL>/chat/completions` | `LLM_SEARCH_BASE_URL` + `LLM_SEARCH_API_KEY` | Generic OpenAI-compatible bridge — registers 4 sub-providers sharing the same endpoint with different model strings. Optional `LLM_SEARCH_<NAME>_MODEL` overrides. |
 | [`gemini_grounded/`](gemini_grounded/AGENTS.md) | `gemini-grounded` (orchestrator-only) | `generativelanguage.googleapis.com/v1beta/...generateContent` with `url_context` tool | `GEMINI_GROUNDED_API_KEY` | Native Gemini API; receives `web_search_fanout` results as grounding sources. Optional `GEMINI_GROUNDED_MODEL`. |
 
 ## Conventions / Invariants
@@ -33,7 +33,7 @@ AI answer providers. Each one accepts a query and returns one or more `SearchRes
 - **Perplexity dual-purpose key**: `PERPLEXITY_API_KEY` powers BOTH the search provider in `../search/perplexity/` (sonar) AND this answer provider (sonar-pro). Same key, different models.
 - **Exa dual-purpose key**: `EXA_API_KEY` powers both `../search/exa/` and `exa_answer` here.
 - **Tavily triple-purpose key**: `TAVILY_API_KEY` powers `../search/tavily/`, `tavily_answer` here, and `../fetch/tavily/`.
-- **LLM bridge default models** (in `../../config/env.ts`): chatgpt → `codex/gpt-5.4`, claude → `claude/haiku`, gemini → `gemini/search-fast`, kimi → `kimi`. Override per-provider via `LLM_SEARCH_<NAME>_MODEL`.
+- **LLM bridge default models** (in `../../config/env.ts`): chatgpt → `codex/gpt-5.4`, claude → `claude/haiku`, gemini → `gemini/search-fast`, grok → `grok`. Override per-provider via `LLM_SEARCH_<NAME>_MODEL`.
 - **Empty-payload anomaly** under high concurrency on the `answer` tool — see `../../docs/mcp-empty-payload-anomaly.md`.
 
 ## Related
