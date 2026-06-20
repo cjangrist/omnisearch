@@ -4,6 +4,12 @@ compatibility_date = "2026-06-20"
 compatibility_flags = ["nodejs_compat"]
 workers_dev = true
 
+# Smart Placement — co-locate the Worker near its (mostly US-based) provider
+# backends so each of the 6 simultaneous outbound connections completes faster,
+# freeing connection slots sooner on the fanout/grounding paths.
+[placement]
+mode = "smart"
+
 [observability]
 enabled = true
 

@@ -288,7 +288,10 @@ export const config = {
 			model: 'openai/gpt-oss-120b',
 			timeout: 60000,
 			max_content_chars: 24000,
-			concurrency: 3,
+			// 6 = Cloudflare's per-invocation cap on simultaneous outgoing connections.
+			// The grounding pool is the main connection user on the web_search path, so 6
+			// saturates the budget; higher just queues behind the cap with no throughput gain.
+			concurrency: 6,
 			per_url_deadline_ms: 15000,
 			retry_on_groq_empty: true,
 			fetch_min_content_chars: 50,

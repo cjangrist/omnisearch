@@ -27,7 +27,7 @@ The OpenAI-compatible LLM bridge (chatgpt / claude / gemini / grok) requires BOT
 - `model`       — `openai/gpt-oss-120b`. Chosen over the 20B variant after the 20B emitted degenerate-sampling output (`hhgghghvgegggg`-style mash) under detailed-prompt + 6k-token-context load. Drop-in tokenizer-compatible; ~6× params; 500 TPS comfortably under the 2 s/call latency budget.
 - `timeout`     — `60000` ms (Groq HTTP timeout — separate from `per_url_deadline_ms`).
 - `max_content_chars` — `24000` (page body truncation before sending to Groq).
-- `concurrency` — `3` (worker pool cap so the fetch waterfall has room for within-URL failover).
+- `concurrency` — `6` (worker pool cap, set to Cloudflare's per-invocation limit of 6 simultaneous outgoing connections so the grounding pool saturates the connection budget on the web_search path; higher just queues behind the cap with no gain).
 - `per_url_deadline_ms` — `15000` (deadline per URL pipeline; aborts the inner Groq HTTP via `AbortController` on fire).
 - `retry_on_groq_empty` — `true` (back-compat tunable that controls the single junk/sentinel-driven retry).
 - `fetch_min_content_chars` — `50` (skip Groq when the page body is below this).
