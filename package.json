@@ -18,7 +18,14 @@
 	"devDependencies": {
 		"@cloudflare/workers-types": "^4.20260426.1",
 		"typescript": "^6.0.3",
-		"wrangler": "^4.85.0"
+		"wrangler": "^4.103.0"
 	},
-	"overrides": {}
+	"overrides": {
+		"hono": ">=4.12.16",
+		"fast-uri": ">=3.1.1",
+		"qs": ">=6.15.2",
+		"ip-address": ">=10.1.1",
+		"@babel/core": ">=7.29.6",
+		"express-rate-limit": ">=8.5.2"
+	}
 }
