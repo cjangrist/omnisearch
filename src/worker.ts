@@ -14,6 +14,7 @@ import { handle_rest_fetch } from './server/rest_fetch.js';
 import { handle_rest_researcher } from './server/rest_researcher.js';
 import { loggers, run_with_request_id } from './common/logger.js';
 import { run_with_execution_context } from './common/r2_trace.js';
+import { set_analytics_datasets, emit_request_metric, type RequestMetric } from './common/metrics.js';
 import type { Env } from './types/env.js';
 
 const logger = loggers.worker();
@@ -328,19 +329,55 @@ const make_dupid_error_response = (jsonrpc_id: string | number | null, session_i
 	});
 };
 
+// Per-request AE metric (Dataset A). Built at the worker isolate's outer edge so it
+// covers every path (REST, /health, 404, CORS, /mcp). Note: for /mcp the duration is
+// handler-setup time — the tool work streams after return; authoritative per-tool
+// latency lives in the search/fetch datasets.
+const REST_PATHS = new Set(['/search', '/fetch', '/researcher']);
+const build_request_metric = (request: Request, url: URL, status: number, duration_ms: number): RequestMetric => {
+	const path = url.pathname;
+	const is_mcp = path === '/mcp';
+	const is_rest = REST_PATHS.has(path);
+	const is_health = path === '/' || path === '/health';
+	const route = is_mcp ? 'mcp'
+		: is_health ? '/health'
+		: is_rest ? `rest:${path}`
+		: status === 404 ? '404'
+		: request.method === 'OPTIONS' ? 'cors'
+		: path;
+	return {
+		route,
+		transport: is_mcp ? 'mcp' : is_rest ? 'rest' : 'edge',
+		cf_country: request.headers.get('cf-ipcountry') ?? '',
+		error_class: status >= 500 ? 'server_error' : status >= 400 ? 'client_error' : '',
+		duration_ms,
+		http_status: status,
+		is_mcp,
+		dup_id_reject: is_mcp && status === 409,
+	};
+};
+
 export default {
 	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
 		const url = new URL(request.url);
 		const start_time = Date.now();
 		const request_id = crypto.randomUUID();
 
+		// Ensure the worker isolate has the AE datasets for the per-request metric.
+		// (The DO isolate sets its own copy in _do_init for the search/fetch datasets
+		// it emits during tool execution.) Cheap + idempotent.
+		set_analytics_datasets({ requests: env.AE_REQUESTS, search: env.AE_SEARCH, fetch: env.AE_FETCH });
+
 		// Scope ExecutionContext per-request via AsyncLocalStorage so flush_background
 		// always attaches to the originating request's ctx (no module-level race).
-		return run_with_execution_context(ctx, () =>
+		const response = await run_with_execution_context(ctx, () =>
 			run_with_request_id(request_id, () =>
 				handle_request(request, env, ctx, url, start_time, request_id),
 			),
 		);
+
+		emit_request_metric(build_request_metric(request, url, response.status, Date.now() - start_time));
+		return response;
 	},
 } satisfies ExportedHandler<Env>;
 

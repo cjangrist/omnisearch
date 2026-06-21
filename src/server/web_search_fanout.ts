@@ -9,7 +9,8 @@ import { get_active_search_providers, type WebSearchProvider } from '../provider
 import type { UnifiedFetchProvider } from '../providers/unified/fetch.js';
 import { config, kv_cache } from '../config/env.js';
 import { TraceContext, get_active_trace, run_with_trace } from '../common/r2_trace.js';
-import { ground_top_results } from './grounded_snippets.js';
+import { ground_top_results, type GroundingStats } from './grounded_snippets.js';
+import { emit_search_metric } from '../common/metrics.js';
 
 const logger = loggers.search();
 
@@ -271,6 +272,14 @@ export const run_web_search_fanout = async (
 			trace.cache_hit = true;
 			trace.record_decision('cache_hit', { query: query.slice(0, 100), grounded: want_grounding });
 			trace.flush_background(cached);
+			emit_search_metric({
+				mode: want_grounding ? 'grounded' : 'raw',
+				total_ms: cached.total_duration_ms,
+				dispatch_ms: 0,
+				providers_succeeded: cached.providers_succeeded.length,
+				providers_failed: cached.providers_failed.length,
+				cache_hit: true,
+			});
 			return cached;
 		}
 
@@ -282,6 +291,7 @@ export const run_web_search_fanout = async (
 			const empty_result: FanoutResult = { query, total_duration_ms: 0, providers_succeeded: [], providers_failed: [], web_results: [] };
 			trace.record_decision('no_providers_available', {});
 			trace.flush_background(empty_result);
+			emit_search_metric({ mode: want_grounding ? 'grounded' : 'raw', outcome_summary: 'no_providers', total_ms: 0, dispatch_ms: 0, providers_succeeded: 0, providers_failed: 0 });
 			return empty_result;
 		}
 
@@ -335,6 +345,7 @@ export const run_web_search_fanout = async (
 		// CEREBRAS_API_KEY is set and a fetch_provider was threaded through).
 		let web_results = ranked_results;
 		let grounding_transient_fail_count = 0;
+		let grounding_stats: GroundingStats | undefined;
 		if (want_grounding && options?.fetch_provider && ranked_results.length > 0) {
 			const { results: top, truncation } = truncate_web_results(ranked_results, GROUNDING_TOP_N);
 			trace.record_decision('grounding_start', { top_n: top.length, truncation });
@@ -342,6 +353,7 @@ export const run_web_search_fanout = async (
 			const grounded_output = await ground_top_results(query, top, options.fetch_provider, options.signal);
 			const grounded_top = grounded_output.results;
 			grounding_transient_fail_count = grounded_output.stats.transient_fail_count;
+			grounding_stats = grounded_output.stats;
 			const grounded_urls = new Set(grounded_top.map((r) => r.url));
 			const ungrounded_remainder = ranked_results.filter((r) => !grounded_urls.has(r.url));
 			web_results = [...grounded_top, ...ungrounded_remainder];
@@ -375,6 +387,26 @@ export const run_web_search_fanout = async (
 			providers_failed,
 			web_results,
 		};
+
+		// AE metric (Dataset B) — one row per fanout. Grounding internals ride the
+		// doubles[] budget so per-provider/grounding detail costs no extra call.
+		emit_search_metric({
+			mode: want_grounding ? 'grounded' : 'raw',
+			outcome_summary: grounding_stats ? `g=${grounding_stats.grounded_count}/${grounding_stats.total_urls},to=${grounding_stats.timeout_count}` : '',
+			total_ms: total_duration,
+			dispatch_ms: dispatch_duration,
+			providers_succeeded: providers_succeeded.length,
+			providers_failed: providers_failed.length,
+			cache_hit: false,
+			grounding_makespan_ms: grounding_stats?.makespan_ms,
+			grounded_count: grounding_stats?.grounded_count,
+			total_urls: grounding_stats?.total_urls,
+			grounding_p50: grounding_stats?.p50_ms,
+			grounding_p95: grounding_stats?.p95_ms,
+			grounding_max: grounding_stats?.max_ms,
+			timeout_count: grounding_stats?.timeout_count,
+			retried_count: grounding_stats?.retried_count,
+		});
 
 		// Only cache COMPLETE fanouts (every active provider settled successfully).
 		// Otherwise a partial — including timeout-limited internal calls from

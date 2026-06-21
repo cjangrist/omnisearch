@@ -307,7 +307,10 @@ const fetch_and_ground = async (
 		fetch_result = await run_fetch_race(
 			fetch_provider,
 			url,
-			skip_providers && skip_providers.length > 0 ? { skip_providers } : undefined,
+			{
+				is_grounding_internal: true,
+				...(skip_providers && skip_providers.length > 0 ? { skip_providers } : {}),
+			},
 		);
 		log_phase(ctx, fetch_phase, pipeline_t0, fetch_t0, {
 			attempt,
@@ -560,6 +563,13 @@ export interface GroundingStats {
 	transient_fail_count: number;
 	grounded_count: number;
 	total_urls: number;
+	// Surfaced for AE metrics (Dataset B) — same numbers as the grounding_aggregate log.
+	makespan_ms: number;
+	p50_ms: number;
+	p95_ms: number;
+	max_ms: number;
+	timeout_count: number;
+	retried_count: number;
 }
 
 export interface GroundingOutput {
@@ -582,7 +592,7 @@ export const ground_top_results = async (
 	fetch_provider: UnifiedFetchProvider,
 	signal?: AbortSignal,
 ): Promise<GroundingOutput> => {
-	if (results.length === 0) return { results, stats: { transient_fail_count: 0, grounded_count: 0, total_urls: 0 } };
+	if (results.length === 0) return { results, stats: { transient_fail_count: 0, grounded_count: 0, total_urls: 0, makespan_ms: 0, p50_ms: 0, p95_ms: 0, max_ms: 0, timeout_count: 0, retried_count: 0 } };
 
 	const cfg = config.snippet_grounding.llm;
 	const aggregate_t0 = Date.now();
@@ -697,6 +707,12 @@ export const ground_top_results = async (
 			transient_fail_count,
 			grounded_count,
 			total_urls: settled.length,
+			makespan_ms: total_duration_ms,
+			p50_ms: percentile(sorted_durations, 0.5),
+			p95_ms: percentile(sorted_durations, 0.95),
+			max_ms: sorted_durations[sorted_durations.length - 1] ?? 0,
+			timeout_count,
+			retried_count,
 		},
 	};
 };

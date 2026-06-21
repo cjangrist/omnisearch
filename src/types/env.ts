@@ -76,4 +76,10 @@ export interface Env {
 
 	// Durable Object namespace for the stateful MCP agent
 	OmnisearchMCP: DurableObjectNamespace;
+
+	// Analytics Engine datasets — cheap queryable time-series metrics.
+	// Optional so local dev / partial configs degrade to silent no-ops.
+	AE_REQUESTS?: AnalyticsEngineDataset;
+	AE_SEARCH?: AnalyticsEngineDataset;
+	AE_FETCH?: AnalyticsEngineDataset;
 }

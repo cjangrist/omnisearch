@@ -19,8 +19,13 @@ import { kv_cache } from '../config/env.js';
 import { hash_key } from '../common/utils.js';
 import { TraceContext, get_active_trace, run_with_trace } from '../common/r2_trace.js';
 import { detect_grounded_junk } from './grounded_prompts.js';
+import { emit_fetch_metric } from '../common/metrics.js';
 
 const logger = loggers.fetch();
+
+const safe_host = (u: string): string => {
+	try { return new URL(u).hostname; } catch { return 'unknown'; }
+};
 
 const KV_FETCH_TTL_SECONDS = 129_600; // 36 hours
 
@@ -460,7 +465,7 @@ export const validate_skip_providers = (parsed: string[]): { valid: string[]; un
 export const run_fetch_race = async (
 	fetch_provider: UnifiedFetchProvider,
 	url: string,
-	options?: { provider?: FetchProviderName; skip_cache?: boolean; skip_providers?: string[] },
+	options?: { provider?: FetchProviderName; skip_cache?: boolean; skip_providers?: string[]; is_grounding_internal?: boolean },
 ): Promise<FetchRaceResult> => {
 	const trace = new TraceContext(crypto.randomUUID(), 'fetch');
 	trace.set_strategy(options?.provider ? 'explicit_provider' : 'waterfall');
@@ -486,6 +491,29 @@ export const run_fetch_race = async (
 
 		// Check KV cache first (skip for explicit provider mode, skip_cache flag, or skip_providers)
 		const has_skip_providers = effective_skip.length > 0;
+
+		// AE metric emitter (Dataset C). Rides every return/throw path; defaults pull
+		// from the live attempted/failed accumulators so each call only overrides the
+		// fields it knows. Non-blocking + error-swallowed in metrics.ts.
+		const fetch_host = safe_host(url);
+		const emit = (f: {
+			outcome: string; provider_used?: string; cache_hit?: boolean;
+			content_length?: number; breaker?: string; error_class?: string;
+			total_ms?: number; waterfall_depth?: number;
+		}): void => emit_fetch_metric({
+			provider_used: f.provider_used ?? '',
+			outcome: f.outcome,
+			breaker: f.breaker,
+			host: fetch_host,
+			error_class: f.error_class,
+			total_ms: f.total_ms ?? (Date.now() - start_time),
+			waterfall_depth: f.waterfall_depth ?? attempted.length,
+			providers_failed_count: failed.length,
+			cache_hit: f.cache_hit,
+			content_length: f.content_length,
+			skip_providers: has_skip_providers,
+			is_grounding_internal: options?.is_grounding_internal,
+		});
 		if (!options?.provider && !options?.skip_cache && !has_skip_providers) {
 			const cached = await get_fetch_cached(url);
 			if (cached) {
@@ -493,6 +521,7 @@ export const run_fetch_race = async (
 				trace.cache_hit = true;
 				trace.record_decision('cache_hit', { url: url.slice(0, 200), provider_used: cached.provider_used });
 				trace.flush_background(cached);
+				emit({ outcome: 'cache_hit', provider_used: cached.provider_used, cache_hit: true, content_length: cached.result.content.length, total_ms: cached.total_duration_ms, waterfall_depth: cached.providers_attempted.length });
 				return cached;
 			}
 		}
@@ -518,17 +547,20 @@ export const run_fetch_race = async (
 				const error_msg = error instanceof Error ? error.message : String(error);
 				trace.record_provider_error(provider, error_msg, Date.now() - start_time);
 				trace.flush_background({ error: error_msg });
+				emit({ outcome: 'error', provider_used: provider, error_class: 'fetch_throw' });
 				throw error;
 			}
 			if (is_fetch_failure(result, provider)) {
 				const error_msg = `${provider} returned blocked or empty content (${result.content?.length ?? 0} chars)`;
 				trace.record_provider_error(provider, error_msg, Date.now() - start_time);
 				trace.flush_background({ error: error_msg });
+				emit({ outcome: 'error', provider_used: provider, error_class: 'blocked_or_empty' });
 				throw new ProviderError(ErrorType.PROVIDER_ERROR, error_msg, provider);
 			}
 			trace.record_provider_complete(provider, result, Date.now() - start_time);
 			const race_result = build_result(start_time, provider, result, attempted, failed, url);
 			trace.flush_background(race_result);
+			emit({ outcome: 'explicit', provider_used: provider, content_length: result.content.length });
 			return race_result;
 		}
 
@@ -557,6 +589,7 @@ export const run_fetch_race = async (
 			const error_msg = `No fetch providers available — ${reason}`;
 			trace.record_decision('empty_active_set', { skipped_providers: Array.from(skip_set) });
 			trace.flush_background({ error: error_msg });
+			emit({ outcome: 'no_providers', error_class: 'empty_active_set' });
 			throw new ProviderError(ErrorType.INVALID_INPUT, error_msg, 'waterfall');
 		}
 
@@ -634,6 +667,7 @@ export const run_fetch_race = async (
 			const error_msg = error instanceof Error ? error.message : String(error);
 			trace.record_decision('waterfall_fast_fail', { reason: error_msg, attempted, failed_count: failed.length });
 			trace.flush_background({ error: error_msg, attempted, failed });
+			emit({ outcome: 'fast_fail', error_class: 'invalid_input' });
 			throw error;
 		}
 
@@ -658,6 +692,7 @@ export const run_fetch_race = async (
 				race_result.alternative_results = winners.slice(1);
 			}
 			trace.flush_background(race_result);
+			emit({ outcome: 'resolved', provider_used: primary.provider, content_length: primary.result.content.length });
 			return race_result;
 		}
 
@@ -676,6 +711,7 @@ export const run_fetch_race = async (
 		});
 
 		trace.flush_background({ error: 'all_providers_failed', attempted, failed });
+		emit({ outcome: 'exhausted', error_class: 'all_providers_failed' });
 
 		throw new ProviderError(
 			ErrorType.PROVIDER_ERROR,
