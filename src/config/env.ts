@@ -294,14 +294,28 @@ export const config = {
 			model: 'gpt-oss-120b',
 			timeout: 60000,
 			max_content_chars: 24000,
-			// 6 = Cloudflare's per-invocation cap on simultaneous outgoing connections.
-			// The grounding pool is the main connection user on the web_search path, so 6
-			// saturates the budget; higher just queues behind the cap with no throughput gain.
-			// Empirically confirmed 2026-06-21: bumping to 20 (one worker/result) made the
-			// grounding phase ~2x SLOWER even locally (per-URL p50 750→1200ms, max hit the
-			// 15s deadline) — high fan-out overwhelms fetch providers + the grounding LLM.
-			concurrency: 6,
-			per_url_deadline_ms: 15000,
+			// Grounding pool width = how many of the top-N URLs ground at once.
+			// Makespan is WAVE-bound: R2 grounding_aggregate over 409 prod runs shows
+			// makespan ≈ 3-4x the slowest single URL, because ~64% of runs have at least
+			// one URL pegged at the 15s per_url_deadline and each wave waits on its
+			// straggler. So waves = ceil(top_n / concurrency) is the lever:
+			//   c=3 → ~7 waves → makespan p90 ~105s (old default)
+			//   c=6 → ~4 waves → ~60s
+			//   c=10 → ~2 waves for the typical 20-URL set → target ~30s
+			// 10 (not higher) because saturation is real at the top: 20 (one worker/URL)
+			// measured ~2x SLOWER (per-URL p50 750→1200ms, everything hits the 15s
+			// deadline) — high fan-out overwhelms the fetch providers + grounding LLM.
+			// NB: the old "6 = Cloudflare connection cap" rationale is obsolete — CF
+			// relaxed the 6-conn limit on 2026-04-09 to only count the waiting-for-headers
+			// phase, so >6 no longer gets spuriously cancelled.
+			concurrency: 10,
+			// 7.5s (was 15s, 2026-06-21, data-driven): R2 grounding_aggregate shows
+			// per-URL p50 ~3.2s and a bimodal tail — URLs either finish by ~4s or run
+			// the deadline out. Each wave waits on its slowest straggler, so halving the
+			// deadline ~halves per-wave cost. The cut-off URLs fall back to the
+			// aggregated snippet (grounded_count was already ~19/20), so quality barely
+			// moves while makespan drops sharply.
+			per_url_deadline_ms: 7500,
 			retry_on_llm_empty: true,
 			fetch_min_content_chars: 50,
 			llm_min_snippet_chars: 1,
