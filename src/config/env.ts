@@ -172,7 +172,10 @@ export const config = {
 		sociavault: {
 			api_key: undefined as string | undefined,
 			base_url: 'https://api.sociavault.com',
-			timeout: 30000,
+			// 15s (was 30s, lowered 2026-06-21, data-driven): reddit successes top out
+			// ~16s and linkedin ~20s, but linkedin fails ~74% at the cap — fail-fast into
+			// the waterfall instead of burning 30s. Trade: drops the ~15-20s linkedin tail.
+			timeout: 15000,
 		},
 		spider: {
 			api_key: undefined as string | undefined,
@@ -294,6 +297,9 @@ export const config = {
 			// 6 = Cloudflare's per-invocation cap on simultaneous outgoing connections.
 			// The grounding pool is the main connection user on the web_search path, so 6
 			// saturates the budget; higher just queues behind the cap with no throughput gain.
+			// Empirically confirmed 2026-06-21: bumping to 20 (one worker/result) made the
+			// grounding phase ~2x SLOWER even locally (per-URL p50 750→1200ms, max hit the
+			// 15s deadline) — high fan-out overwhelms fetch providers + the grounding LLM.
 			concurrency: 6,
 			per_url_deadline_ms: 15000,
 			retry_on_llm_empty: true,

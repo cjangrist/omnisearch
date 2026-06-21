@@ -110,7 +110,7 @@ const CONFIG = {
 			provider: 'sociavault',
 			domains: [
 				'tiktok.com', 'instagram.com', 'youtube.com', 'youtu.be',
-				'linkedin.com', 'facebook.com', 'fb.com',
+				'facebook.com', 'fb.com',
 				'twitter.com', 'x.com', 'pinterest.com',
 				'reddit.com', 'threads.net', 'snapchat.com',
 			],
