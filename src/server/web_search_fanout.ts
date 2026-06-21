@@ -244,7 +244,7 @@ export const run_web_search_fanout = async (
 	},
 ): Promise<FanoutResult> => {
 	const want_grounding = options?.grounded_snippets !== false
-		&& !!config.snippet_grounding.groq.api_key
+		&& !!config.snippet_grounding.llm.api_key
 		&& !!options?.fetch_provider;
 	const trace = new TraceContext(crypto.randomUUID(), 'web_search');
 	const parent = get_active_trace();
@@ -332,7 +332,7 @@ export const run_web_search_fanout = async (
 		// query-grounded snippets from the actual page content. Failures fall
 		// back to the original aggregated snippet so a single bad URL never
 		// breaks the result set. Gated on want_grounding (default true when
-		// GROQ_API_KEY is set and a fetch_provider was threaded through).
+		// CEREBRAS_API_KEY is set and a fetch_provider was threaded through).
 		let web_results = ranked_results;
 		let grounding_transient_fail_count = 0;
 		if (want_grounding && options?.fetch_provider && ranked_results.length > 0) {
@@ -382,10 +382,10 @@ export const run_web_search_fanout = async (
 		// result that subsequent unconstrained /search calls would receive for 36h.
 		//
 		// "Complete" now includes the grounding stage when want_grounding is true:
-		// an all-fallback grounding (every URL hit groq_error / pipeline_timeout /
+		// an all-fallback grounding (every URL hit llm_error / pipeline_timeout /
 		// worker_rejected) used to pass this gate because grounding failures don't
 		// appear in providers_failed, only in snippet_source. The result would be
-		// cached as the steady-state answer for 36h, masking Groq/worker recovery.
+		// cached as the steady-state answer for 36h, masking LLM/worker recovery.
 		// hh round 2026-05-20: 4-of-6 reviewer consensus. Conservative threshold —
 		// any transient grounding failure blocks the write; pure URL-level junk
 		// (paywall / 404 / login wall) is still cacheable because that's a durable

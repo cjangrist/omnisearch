@@ -278,17 +278,16 @@ export const config = {
 		},
 	},
 	snippet_grounding: {
-		groq: {
+		llm: {
 			api_key: undefined as string | undefined,
 			base_url: 'https://api.cerebras.ai/v1',
-			// Snippet-grounding LLM provider. Config sub-key keeps the historical `groq`
-			// name (and the groq_* field/outcome/trace labels below) so the swap stays
-			// values-only and trivially revertible — but the provider is CEREBRAS as of
-			// 2026-06-20. Groq→Cerebras, same model (gpt-oss-120b): ~3x faster on the
-			// grounding workload (median ~0.45s vs ~1.3s/call, ~1100 vs ~400 tok/s in a
-			// head-to-head on identical prompt+params). Cerebras drops the `openai/` model
-			// prefix Groq required. 120b over 20b: 20b emitted "hhgghghvgegggg"-style
-			// degenerate-sampling output under the detailed prompt + 6k-token context.
+			// Snippet-grounding LLM. Provider-neutral config key (`llm`) and labels;
+			// active provider is CEREBRAS as of 2026-06-20 (key from CEREBRAS_API_KEY).
+			// Same model as the prior provider (gpt-oss-120b), ~3x faster on the grounding
+			// workload: median ~0.45s vs ~1.3s/call, ~1100 vs ~400 tok/s, identical
+			// prompt+params. Cerebras drops the `openai/` model prefix the prior provider
+			// required. 120b over 20b: 20b emitted "hhgghghvgegggg"-style degenerate
+			// sampling under the detailed prompt + 6k-token context.
 			model: 'gpt-oss-120b',
 			timeout: 60000,
 			max_content_chars: 24000,
@@ -297,9 +296,9 @@ export const config = {
 			// saturates the budget; higher just queues behind the cap with no throughput gain.
 			concurrency: 6,
 			per_url_deadline_ms: 15000,
-			retry_on_groq_empty: true,
+			retry_on_llm_empty: true,
 			fetch_min_content_chars: 50,
-			groq_min_snippet_chars: 1,
+			llm_min_snippet_chars: 1,
 		},
 	},
 };
@@ -375,9 +374,9 @@ export const initialize_config = (env: Env) => {
 		config.ai_response.gemini_grounded.model = env.GEMINI_GROUNDED_MODEL;
 	}
 
-	// Snippet grounding (gpt-oss-120b via OpenAI-compatible endpoint) — Cerebras as of
-	// 2026-06-20 (was Groq; ~3x faster, same model). Config sub-key still named `groq`.
-	config.snippet_grounding.groq.api_key = env.CEREBRAS_API_KEY;
+	// Snippet grounding (gpt-oss-120b via OpenAI-compatible endpoint). Cerebras as of
+	// 2026-06-20; ~3x faster than the prior provider, same model.
+	config.snippet_grounding.llm.api_key = env.CEREBRAS_API_KEY;
 
 	// Fetch providers (reuse shared keys where applicable)
 	config.fetch.tavily.api_key = env.TAVILY_API_KEY;
@@ -436,7 +435,7 @@ export const validate_config = () => {
 			const cfg = c as { api_key?: string; username?: string; account_id?: string };
 			return [`fetch.${name}`, cfg.api_key ?? cfg.username ?? cfg.account_id] as [string, string | undefined];
 		}),
-		['snippet_grounding.cerebras', config.snippet_grounding.groq.api_key || undefined],
+		['snippet_grounding.llm', config.snippet_grounding.llm.api_key || undefined],
 	];
 
 	const available = all_keys.filter(([, v]) => v).map(([n]) => n);

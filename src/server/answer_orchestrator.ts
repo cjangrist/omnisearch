@@ -97,8 +97,8 @@ const build_tasks = (
 			name: 'gemini-grounded',
 			started_at: Date.now(),
 			promise: (async () => {
-				// Pass fetch_provider so the inner fanout produces Groq-grounded snippets
-				// (when GROQ_API_KEY is set) and so the cache key matches the web_search
+				// Pass fetch_provider so the inner fanout produces grounded snippets
+				// (when CEREBRAS_API_KEY is set) and so the cache key matches the web_search
 				// tool's grounded-true default — repeated queries become cache hits.
 				const fanout = await run_web_search_fanout(web_search_ref, query, {
 					signal,

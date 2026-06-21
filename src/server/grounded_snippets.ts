@@ -6,26 +6,26 @@
 // Conceptual model (intentionally narrow):
 //   - The search engines have already decided these pages are relevant.
 //   - Our reranker picked the best subset.
-//   - Groq's job is just to SUMMARIZE WHAT THE PAGE CONTAINS, framed by the
-//     query topic. It is NOT Groq's job to decide whether the page actually
+//   - LLM's job is just to SUMMARIZE WHAT THE PAGE CONTAINS, framed by the
+//     query topic. It is NOT LLM's job to decide whether the page actually
 //     addresses the query — even an off-topic page should get a summary
 //     describing what it IS about. The user (or upstream LLM) decides
 //     relevance from the snippet.
 //   - Therefore: the only legitimate reason to RETRY a fetch is a fetch-side
 //     pipeline error (paywall surfaced as the body, login wall, cookie wall,
 //     JavaScript-required shell, etc.) — anything where the bytes returned
-//     are not the page's real content. We detect those PRE-Groq via pattern
+//     are not the page's real content. We detect those PRE-LLM via pattern
 //     matching and retry with skip_providers={winner_of_attempt_1}. We do
-//     NOT retry based on Groq's output.
+//     NOT retry based on LLM's output.
 //
 // Robustness model:
 //   1. Bounded worker pool (default concurrency=3). Providers see at most N
 //      simultaneous calls — the waterfall has room to do its within-URL
 //      failover (Tavily fails → Firecrawl tries → ...).
 //   2. Per-URL hard deadline (default 15s) — no single bad URL stalls a worker.
-//   3. Junk-content detection (paywall / login-wall / etc.) BEFORE Groq.
+//   3. Junk-content detection (paywall / login-wall / etc.) BEFORE LLM.
 //      Triggers a single retry with skip_providers. No retry when fetch_race
-//      throws (waterfall already exhausted) and no retry on Groq's verdict.
+//      throws (waterfall already exhausted) and no retry on LLM's verdict.
 //   4. Failure classification (8 outcomes) — every path produces exactly one.
 //   5. Structured logging at every phase boundary with timestamps, durations,
 //      provider attribution. Plus a single grounding_aggregate line for
@@ -57,9 +57,9 @@ export type GroundingOutcome =
 	| 'fallback:fetch_exhausted'
 	| 'fallback:fetch_too_short'
 	| 'fallback:fetch_junk_after_retry'
-	| 'fallback:groq_sentinel'
-	| 'fallback:groq_error'
-	| 'fallback:groq_empty'
+	| 'fallback:llm_sentinel'
+	| 'fallback:llm_error'
+	| 'fallback:llm_empty'
 	| 'fallback:pipeline_timeout';
 
 interface PipelineOutcome {
@@ -79,7 +79,7 @@ interface PipelineResult {
 	outcome: PipelineOutcome;
 }
 
-interface GroqChatResponse {
+interface LlmChatResponse {
 	id?: string;
 	model?: string;
 	choices?: Array<{
@@ -160,9 +160,9 @@ const percentile = (sorted_asc: number[], p: number): number => {
 	return sorted_asc[idx];
 };
 
-// ── Groq client ──────────────────────────────────────────────────────────────
+// ── LLM client ──────────────────────────────────────────────────────────────
 
-interface GroqExtractResult {
+interface LlmExtractResult {
 	snippet: string;
 	finish_reason: string;
 	prompt_tokens: number;
@@ -193,9 +193,9 @@ const extract_grounded_snippet = async (
 	title: string,
 	content: string,
 	signal: AbortSignal | undefined,
-): Promise<GroqExtractResult> => {
-	const cfg = config.snippet_grounding.groq;
-	const response = await http_json<GroqChatResponse>(
+): Promise<LlmExtractResult> => {
+	const cfg = config.snippet_grounding.llm;
+	const response = await http_json<LlmChatResponse>(
 		provider_name,
 		`${cfg.base_url}/chat/completions`,
 		{
@@ -272,10 +272,10 @@ interface PipelineRunResult {
 	last_error?: string;
 }
 
-// Run a single fetch + Groq pair. Used by both attempt 1 and the retry path.
+// Run a single fetch + LLM pair. Used by both attempt 1 and the retry path.
 // Returns either a winning snippet or a structured failure indicator.
 interface FetchAndGroundResult {
-	kind: 'success' | 'fetch_throw' | 'fetch_too_short' | 'fetch_junk' | 'groq_error' | 'groq_empty' | 'groq_sentinel';
+	kind: 'success' | 'fetch_throw' | 'fetch_too_short' | 'fetch_junk' | 'llm_error' | 'llm_empty' | 'llm_sentinel';
 	fetch_result?: FetchRaceResult;
 	snippet?: string;
 	error?: string;
@@ -293,12 +293,12 @@ const fetch_and_ground = async (
 	attempt: 1 | 2,
 	skip_providers?: string[],
 ): Promise<FetchAndGroundResult> => {
-	const cfg = config.snippet_grounding.groq;
+	const cfg = config.snippet_grounding.llm;
 	const fetch_phase = `fetch_attempt_${attempt}`;
-	const groq_phase = `groq_attempt_${attempt}`;
+	const llm_phase = `llm_attempt_${attempt}`;
 	const trace_provider_key = attempt === 1
-		? `groq_grounding_${ctx.pipeline_index}`
-		: `groq_grounding_${ctx.pipeline_index}_retry`;
+		? `llm_grounding_${ctx.pipeline_index}`
+		: `llm_grounding_${ctx.pipeline_index}_retry`;
 
 	// Fetch
 	const fetch_t0 = Date.now();
@@ -337,7 +337,7 @@ const fetch_and_ground = async (
 		return { kind: 'fetch_too_short', fetch_result };
 	}
 
-	// Junk content guard (paywall/login-wall/etc.) — pre-Groq detection.
+	// Junk content guard (paywall/login-wall/etc.) — pre-LLM detection.
 	// On attempt 1, this triggers a retry with skip_providers={winner}. On
 	// attempt 2, it surfaces as fallback:fetch_junk_after_retry.
 	const junk_reason = detect_grounded_junk(fetch_result.result.content);
@@ -351,47 +351,47 @@ const fetch_and_ground = async (
 		return { kind: 'fetch_junk', fetch_result, junk_reason };
 	}
 
-	// Groq
-	const groq_t0 = Date.now();
+	// LLM
+	const llm_t0 = Date.now();
 	try {
-		const groq_out = await extract_grounded_snippet(
+		const llm_out = await extract_grounded_snippet(
 			trace_provider_key,
 			query,
 			fetch_result.result.title,
 			fetch_result.result.content,
 			signal,
 		);
-		log_phase(ctx, groq_phase, pipeline_t0, groq_t0, {
+		log_phase(ctx, llm_phase, pipeline_t0, llm_t0, {
 			attempt,
-			snippet_length: groq_out.snippet.length,
-			finish_reason: groq_out.finish_reason,
-			prompt_tokens: groq_out.prompt_tokens,
-			completion_tokens: groq_out.completion_tokens,
+			snippet_length: llm_out.snippet.length,
+			finish_reason: llm_out.finish_reason,
+			prompt_tokens: llm_out.prompt_tokens,
+			completion_tokens: llm_out.completion_tokens,
 		});
-		if (groq_out.snippet.length < cfg.groq_min_snippet_chars) {
-			return { kind: 'groq_empty', fetch_result, snippet: groq_out.snippet };
+		if (llm_out.snippet.length < cfg.llm_min_snippet_chars) {
+			return { kind: 'llm_empty', fetch_result, snippet: llm_out.snippet };
 		}
 		// Sentinel detection: model signals "this page genuinely has no usable
 		// content for the query" via one of the bracketed strings in the system
 		// prompt. We map back to the original aggregated snippet (fallback) so
 		// users don't see "[no usable content]" in the response. Treated like
 		// fetch_junk for retry purposes — a different fetcher might rescue.
-		const sentinel = detect_grounded_sentinel(groq_out.snippet);
+		const sentinel = detect_grounded_sentinel(llm_out.snippet);
 		if (sentinel) {
-			log_phase(ctx, `${groq_phase}_sentinel`, pipeline_t0, groq_t0, {
+			log_phase(ctx, `${llm_phase}_sentinel`, pipeline_t0, llm_t0, {
 				attempt,
 				sentinel,
 			});
-			return { kind: 'groq_sentinel', fetch_result, snippet: groq_out.snippet, sentinel };
+			return { kind: 'llm_sentinel', fetch_result, snippet: llm_out.snippet, sentinel };
 		}
-		return { kind: 'success', fetch_result, snippet: groq_out.snippet };
+		return { kind: 'success', fetch_result, snippet: llm_out.snippet };
 	} catch (err) {
 		const msg = error_message(err);
-		log_phase(ctx, groq_phase, pipeline_t0, groq_t0, {
+		log_phase(ctx, llm_phase, pipeline_t0, llm_t0, {
 			attempt,
 			error: msg,
 		});
-		return { kind: 'groq_error', fetch_result, error: msg };
+		return { kind: 'llm_error', fetch_result, error: msg };
 	}
 };
 
@@ -403,7 +403,7 @@ const run_pipeline = async (
 	fetch_provider: UnifiedFetchProvider,
 	signal: AbortSignal | undefined,
 ): Promise<PipelineRunResult> => {
-	const cfg = config.snippet_grounding.groq;
+	const cfg = config.snippet_grounding.llm;
 
 	// Attempt 1: fetch + ground. Retry only on fetch_throw (waterfall pointlessly
 	// already exhausted, no retry there) is NOT triggered — instead we retry on
@@ -419,21 +419,21 @@ const run_pipeline = async (
 	if (a1.kind === 'fetch_too_short') {
 		return { outcome: 'fallback:fetch_too_short', attempts: 1, winning_fetch: a1.fetch_result };
 	}
-	if (a1.kind === 'groq_error') {
-		return { outcome: 'fallback:groq_error', attempts: 1, winning_fetch: a1.fetch_result, last_error: a1.error };
+	if (a1.kind === 'llm_error') {
+		return { outcome: 'fallback:llm_error', attempts: 1, winning_fetch: a1.fetch_result, last_error: a1.error };
 	}
-	if (a1.kind === 'groq_empty') {
-		return { outcome: 'fallback:groq_empty', attempts: 1, winning_fetch: a1.fetch_result };
+	if (a1.kind === 'llm_empty') {
+		return { outcome: 'fallback:llm_empty', attempts: 1, winning_fetch: a1.fetch_result };
 	}
 
-	// a1.kind === 'fetch_junk' OR 'groq_sentinel' — both signal "the page returned
+	// a1.kind === 'fetch_junk' OR 'llm_sentinel' — both signal "the page returned
 	// content but it isn't real page content for this query" (paywall fragment,
 	// login shell, 404 body, nav-only homepage, etc.). Both warrant retry with a
 	// different fetcher; that path is unified.
-	if (!cfg.retry_on_groq_empty) {
+	if (!cfg.retry_on_llm_empty) {
 		// Tunable kept for back-compat — false disables the retry path entirely.
-		const a1_outcome: GroundingOutcome = a1.kind === 'groq_sentinel'
-			? 'fallback:groq_sentinel'
+		const a1_outcome: GroundingOutcome = a1.kind === 'llm_sentinel'
+			? 'fallback:llm_sentinel'
 			: 'fallback:fetch_junk_after_retry';
 		return { outcome: a1_outcome, attempts: 1, winning_fetch: a1.fetch_result };
 	}
@@ -449,15 +449,15 @@ const run_pipeline = async (
 	if (a2.kind === 'fetch_too_short' || a2.kind === 'fetch_junk') {
 		return { outcome: 'fallback:fetch_junk_after_retry', attempts: 2, winning_fetch: a2.fetch_result };
 	}
-	if (a2.kind === 'groq_sentinel') {
+	if (a2.kind === 'llm_sentinel') {
 		// Both fetchers' content prompted the model to declare no usable content.
 		// Likely the page genuinely has nothing for this query (404, nav, SERP).
-		return { outcome: 'fallback:groq_sentinel', attempts: 2, winning_fetch: a2.fetch_result };
+		return { outcome: 'fallback:llm_sentinel', attempts: 2, winning_fetch: a2.fetch_result };
 	}
-	if (a2.kind === 'groq_error') {
-		return { outcome: 'fallback:groq_error', attempts: 2, winning_fetch: a2.fetch_result, last_error: a2.error };
+	if (a2.kind === 'llm_error') {
+		return { outcome: 'fallback:llm_error', attempts: 2, winning_fetch: a2.fetch_result, last_error: a2.error };
 	}
-	return { outcome: 'fallback:groq_empty', attempts: 2, winning_fetch: a2.fetch_result };
+	return { outcome: 'fallback:llm_empty', attempts: 2, winning_fetch: a2.fetch_result };
 };
 
 const fetch_then_ground = async (
@@ -467,7 +467,7 @@ const fetch_then_ground = async (
 	signal: AbortSignal | undefined,
 	index: number,
 ): Promise<PipelineResult> => {
-	const cfg = config.snippet_grounding.groq;
+	const cfg = config.snippet_grounding.llm;
 	const pipeline_t0 = Date.now();
 	const ctx: PipelineCtx = {
 		pipeline_index: index,
@@ -475,18 +475,18 @@ const fetch_then_ground = async (
 		host: safe_hostname(result.url),
 	};
 	const trace = get_active_trace();
-	const trace_provider_key = `groq_grounding_${index}`;
+	const trace_provider_key = `llm_grounding_${index}`;
 	trace?.record_provider_start(trace_provider_key, { url: result.url, host: ctx.host });
 
 	log_phase(ctx, 'pipeline_start', pipeline_t0, pipeline_t0);
 
-	// Per-URL deadline aborts the inner pipeline (Groq half) when fired. R1 H2
+	// Per-URL deadline aborts the inner pipeline (LLM half) when fired. R1 H2
 	// (round-2 confirmed 9/9 consensus): the prior implementation resolved the
-	// outer promise on timeout but left the inner fetch + Groq calls running,
+	// outer promise on timeout but left the inner fetch + LLM calls running,
 	// silently violating the concurrency=3 cap. Now: deadline triggers
 	// AbortController.abort(); the abort signal is threaded into run_pipeline →
 	// fetch_and_ground → extract_grounded_snippet's make_signal(timeout, signal),
-	// so the outstanding Groq HTTP request fails fast with AbortError.
+	// so the outstanding LLM HTTP request fails fast with AbortError.
 	// Caveat: run_fetch_race doesn't accept a signal yet (separate orchestrator
 	// change), so the fetch waterfall side still runs to its own timeouts —
 	// that's a future commit.
@@ -569,10 +569,10 @@ export interface GroundingOutput {
 
 // Outcomes that indicate transient infra failure (NOT durable page/URL state).
 // Used by callers to decide whether to cache the fanout result — a fanout where
-// Groq blipped or workers got rejected should not be cached as the steady-state
+// LLM blipped or workers got rejected should not be cached as the steady-state
 // answer because the 36h TTL would mask recovery.
 const TRANSIENT_GROUNDING_OUTCOMES: ReadonlySet<GroundingOutcome> = new Set<GroundingOutcome>([
-	'fallback:groq_error',
+	'fallback:llm_error',
 	'fallback:pipeline_timeout',
 ]);
 
@@ -584,7 +584,7 @@ export const ground_top_results = async (
 ): Promise<GroundingOutput> => {
 	if (results.length === 0) return { results, stats: { transient_fail_count: 0, grounded_count: 0, total_urls: 0 } };
 
-	const cfg = config.snippet_grounding.groq;
+	const cfg = config.snippet_grounding.llm;
 	const aggregate_t0 = Date.now();
 	const trace = get_active_trace();
 
@@ -595,7 +595,7 @@ export const ground_top_results = async (
 		count: results.length,
 		concurrency: cfg.concurrency,
 		per_url_deadline_ms: cfg.per_url_deadline_ms,
-		retry_on_groq_empty: cfg.retry_on_groq_empty,
+		retry_on_llm_empty: cfg.retry_on_llm_empty,
 	});
 
 	const settled = await run_with_concurrency(
