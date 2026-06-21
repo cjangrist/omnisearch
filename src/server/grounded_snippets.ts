@@ -1,6 +1,6 @@
 // Grounded snippets: after the web_search RRF ranker picks the top-N results,
 // fetch each URL through the existing fetch waterfall (concurrency-capped to
-// avoid hammering providers) and use Groq (openai/gpt-oss-20b) to write a
+// avoid hammering providers) and use Cerebras (gpt-oss-120b) to write a
 // snippet summarizing what the page says (in the context of the query).
 //
 // Conceptual model (intentionally narrow):

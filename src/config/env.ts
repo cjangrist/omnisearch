@@ -280,12 +280,16 @@ export const config = {
 	snippet_grounding: {
 		groq: {
 			api_key: undefined as string | undefined,
-			base_url: 'https://api.groq.com/openai/v1',
-			// gpt-oss-120b chosen over 20b after the 20b emitted "hhgghghvgegggg"-style
-			// degenerate-sampling output under detailed-prompt + 6k-token-context load.
-			// Same chat template / tokenizer as 20b (drop-in), 6× params, $0.15/$0.60 per M
-			// tokens. 500 TPS comfortably under our 2s/call latency budget.
-			model: 'openai/gpt-oss-120b',
+			base_url: 'https://api.cerebras.ai/v1',
+			// Snippet-grounding LLM provider. Config sub-key keeps the historical `groq`
+			// name (and the groq_* field/outcome/trace labels below) so the swap stays
+			// values-only and trivially revertible — but the provider is CEREBRAS as of
+			// 2026-06-20. Groq→Cerebras, same model (gpt-oss-120b): ~3x faster on the
+			// grounding workload (median ~0.45s vs ~1.3s/call, ~1100 vs ~400 tok/s in a
+			// head-to-head on identical prompt+params). Cerebras drops the `openai/` model
+			// prefix Groq required. 120b over 20b: 20b emitted "hhgghghvgegggg"-style
+			// degenerate-sampling output under the detailed prompt + 6k-token context.
+			model: 'gpt-oss-120b',
 			timeout: 60000,
 			max_content_chars: 24000,
 			// 6 = Cloudflare's per-invocation cap on simultaneous outgoing connections.
@@ -371,8 +375,9 @@ export const initialize_config = (env: Env) => {
 		config.ai_response.gemini_grounded.model = env.GEMINI_GROUNDED_MODEL;
 	}
 
-	// Groq snippet grounding (openai/gpt-oss-20b via OpenAI-compatible endpoint)
-	config.snippet_grounding.groq.api_key = env.GROQ_API_KEY;
+	// Snippet grounding (gpt-oss-120b via OpenAI-compatible endpoint) — Cerebras as of
+	// 2026-06-20 (was Groq; ~3x faster, same model). Config sub-key still named `groq`.
+	config.snippet_grounding.groq.api_key = env.CEREBRAS_API_KEY;
 
 	// Fetch providers (reuse shared keys where applicable)
 	config.fetch.tavily.api_key = env.TAVILY_API_KEY;
@@ -431,7 +436,7 @@ export const validate_config = () => {
 			const cfg = c as { api_key?: string; username?: string; account_id?: string };
 			return [`fetch.${name}`, cfg.api_key ?? cfg.username ?? cfg.account_id] as [string, string | undefined];
 		}),
-		['snippet_grounding.groq', config.snippet_grounding.groq.api_key || undefined],
+		['snippet_grounding.cerebras', config.snippet_grounding.groq.api_key || undefined],
 	];
 
 	const available = all_keys.filter(([, v]) => v).map(([n]) => n);

@@ -328,7 +328,7 @@ export const run_web_search_fanout = async (
 		});
 
 		// Grounding: after RRF + dedup + tail rescue + quality filter, fetch the
-		// top-N URLs in parallel and use Groq (openai/gpt-oss-20b) to extract
+		// top-N URLs in parallel and use Cerebras (gpt-oss-120b) to extract
 		// query-grounded snippets from the actual page content. Failures fall
 		// back to the original aggregated snippet so a single bad URL never
 		// breaks the result set. Gated on want_grounding (default true when
