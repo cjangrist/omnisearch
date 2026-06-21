@@ -2,7 +2,7 @@ name = "omnisearch-mcp"
 main = "src/worker.ts"
 compatibility_date = "2026-06-20"
 compatibility_flags = ["nodejs_compat"]
-workers_dev = true
+workers_dev = false
 
 # Smart Placement — co-locate the Worker near its (mostly US-based) provider
 # backends so each of the 6 simultaneous outbound connections completes faster,
@@ -50,9 +50,8 @@ dataset = "omni_search"
 binding = "AE_FETCH"
 dataset = "omni_fetch"
 
-[[routes]]
-pattern = "omnisearch.example.invalid/*"
-zone_name = "example.invalid"
+# Route (custom domain) managed out-of-band via the Cloudflare dashboard/API,
+# intentionally not committed. workers_dev is disabled above.
 
 [[migrations]]
 tag = "v1"

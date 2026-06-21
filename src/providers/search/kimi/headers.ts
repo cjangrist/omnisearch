@@ -6,7 +6,7 @@
 
 const KIMI_PLATFORM = 'kimi_cli';
 const KIMI_CLI_VERSION = '1.37.0';
-const KIMI_DEVICE_NAME = 'gus-01.example.invalid';
+const KIMI_DEVICE_NAME = 'device-01';
 const KIMI_DEVICE_MODEL = 'Linux 6.17.0-1009-gcp x86_64';
 const KIMI_OS_VERSION = '#9-Ubuntu SMP Fri Mar  6 21:21:14 UTC 2026';
 const KIMI_DEVICE_ID = 'babf43cbff8d4c789b8a8fabc85b0490';
