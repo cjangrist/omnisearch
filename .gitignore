@@ -146,3 +146,7 @@ trash/
 tools/__pycache__/
 tools/*.pyc
 
+# Wrangler — config holds the no-auth custom-domain route; keep local-only.
+wrangler.toml
+.wrangler/
+
