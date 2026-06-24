@@ -139,7 +139,9 @@ export async function fetch_raw_file(
 	});
 
 	if (resp.status === 404) {
-		throw new ProviderError(ErrorType.INVALID_INPUT, `Not found: ${raw_url}`, 'github');
+		// NOT_FOUND (not INVALID_INPUT): a raw file that genuinely 404s IS the one case
+		// that should fast-fail the waterfall — scrapers won't find it either.
+		throw new ProviderError(ErrorType.NOT_FOUND, `Not found: ${raw_url}`, 'github');
 	}
 	if (!resp.ok) {
 		throw new ProviderError(ErrorType.PROVIDER_ERROR, `GitHub raw fetch failed (${resp.status})`, 'github');

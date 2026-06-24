@@ -151,6 +151,7 @@ export async function handle_rest_fetch(
 	} catch (err) {
 		const error_message = err instanceof Error ? err.message : String(err);
 		const status = err instanceof ProviderError && err.type === ErrorType.RATE_LIMIT ? 429
+			: err instanceof ProviderError && err.type === ErrorType.NOT_FOUND ? 404
 			: err instanceof ProviderError && err.type === ErrorType.INVALID_INPUT ? 400
 			: 502;
 		logger.error('Fetch failed', {

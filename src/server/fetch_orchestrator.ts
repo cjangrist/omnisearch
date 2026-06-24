@@ -251,8 +251,12 @@ const run_solo = async (ctx: StepContext, provider: string): Promise<FetchResult
 		const error_msg = error instanceof Error ? error.message : String(error);
 		ctx.failed.push({ provider, error: error_msg, duration_ms });
 		trace?.record_provider_error(provider, error_msg, duration_ms);
-		// INVALID_INPUT = resource definitively absent (e.g. 404 from github provider) — fast-fail the waterfall
-		if (error instanceof ProviderError && error.type === ErrorType.INVALID_INPUT) throw error;
+		// NOT_FOUND = resource definitively absent (e.g. raw github 404) — fast-fail the waterfall.
+		// INVALID_INPUT means a specialized provider can't handle this URL TYPE (e.g. github
+		// discussion/compare/action_run, sociavault unsupported platform, missing API key) and
+		// MUST fall through to the next provider — so it is NOT a fast-fail trigger. Returning
+		// undefined lets the breaker/waterfall continue to a general scraper.
+		if (error instanceof ProviderError && error.type === ErrorType.NOT_FOUND) throw error;
 		return undefined;
 	}
 };
@@ -661,13 +665,14 @@ export const run_fetch_race = async (
 				}
 			}
 		} catch (error) {
-			// INVALID_INPUT re-thrown by run_solo means the resource definitively doesn't
-			// exist (e.g. 404 from the github breaker). Fast-fail: flush trace and propagate
-			// immediately instead of exhausting the rest of the waterfall.
+			// NOT_FOUND re-thrown by run_solo means the resource definitively doesn't
+			// exist (e.g. raw github 404). Fast-fail: flush trace and propagate
+			// immediately instead of exhausting the rest of the waterfall. (INVALID_INPUT
+			// no longer reaches here — run_solo now lets it fall through.)
 			const error_msg = error instanceof Error ? error.message : String(error);
 			trace.record_decision('waterfall_fast_fail', { reason: error_msg, attempted, failed_count: failed.length });
 			trace.flush_background({ error: error_msg, attempted, failed });
-			emit({ outcome: 'fast_fail', error_class: 'invalid_input' });
+			emit({ outcome: 'fast_fail', error_class: 'not_found' });
 			throw error;
 		}
 
