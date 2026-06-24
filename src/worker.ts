@@ -271,63 +271,15 @@ const mcp_handler = OmnisearchMCP.serve('/mcp', {
 	},
 });
 
-// In-flight (session_id, jsonrpc_id) tracking for duplicate-id defense.
-//
-// Root cause: the `agents` package's StreamableHTTPServerTransport (DO-side)
-// keys requestToStreamMapping by JSON-RPC id from the client. When two
-// concurrent POSTs on the same session carry the same id, the second call's
-// streamId overwrites the first's mapping, so the first's response routes
-// out the second's HTTP body — a cross-mixup observable as request A getting
-// request B's answer (verified via tmp/dupid_truly_concurrent_2026-05-21/).
-//
-// We reject duplicates here at the worker isolate (single-threaded, before
-// the DO handle) so the second POST gets a clean JSON-RPC error instead of
-// silently swapping responses. Edge case: cross-isolate same-session
-// duplicates (rare; geo-rerouting between requests) can still slip past
-// this, but real MCP clients should not reuse ids on the same session.
-//
-// Map<session_id, Map<jsonrpc_id, expires_at_ms>>. TTL safety net so a
-// crashed handler can't permanently block an id; 10 minutes covers the
-// longest expected answer fanout.
-const INFLIGHT_TTL_MS = 600_000;
-const inflight_ids = new Map<string, Map<string | number, number>>();
-
-const try_register_inflight = (session_id: string, jsonrpc_id: string | number): boolean => {
-	const now = Date.now();
-	let id_map = inflight_ids.get(session_id);
-	if (!id_map) {
-		id_map = new Map();
-		inflight_ids.set(session_id, id_map);
-	}
-	const existing_expires = id_map.get(jsonrpc_id);
-	if (existing_expires !== undefined && existing_expires > now) {
-		return false; // still in-flight
-	}
-	id_map.set(jsonrpc_id, now + INFLIGHT_TTL_MS);
-	return true;
-};
-
-const release_inflight = (session_id: string, jsonrpc_id: string | number): void => {
-	const id_map = inflight_ids.get(session_id);
-	if (!id_map) return;
-	id_map.delete(jsonrpc_id);
-	if (id_map.size === 0) inflight_ids.delete(session_id);
-};
-
-const make_dupid_error_response = (jsonrpc_id: string | number | null, session_id: string): Response => {
-	const body = JSON.stringify({
-		jsonrpc: '2.0',
-		id: jsonrpc_id,
-		error: {
-			code: -32600,
-			message: `Duplicate JSON-RPC id ${String(jsonrpc_id)} on session ${session_id.slice(0, 16)}… — a request with this id is already in flight. JSON-RPC requires unique ids per session.`,
-		},
-	});
-	return new Response(body, {
-		status: 409,
-		headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
-	});
-};
+// A worker-isolate duplicate-JSON-RPC-id guard used to live here: it rejected
+// concurrent same-id POSTs with a 409 to avoid a requestToStreamMapping
+// cross-mixup in agents' StreamableHTTPServerTransport. REMOVED 2026-06-24 —
+// agents@0.16.2 routes responses by connection (verified three ways: undici
+// 8/8, the gold-standard concurrent same-id `answer` repro, and agents source
+// `mcp/index.js` connection-keyed `sendForRequest`), so the guard was no longer
+// preventing anything. Worse, its blanket 310s in-flight lock turned Claude-web's
+// stream-reconnect retries (same json-rpc id) into a 409 storm. See project
+// memory [[mcp-409-dupid-storm]] for the full analysis.
 
 // Per-request AE metric (Dataset A). Built at the worker isolate's outer edge so it
 // covers every path (REST, /health, 404, CORS, /mcp). Note: for /mcp the duration is
@@ -502,8 +454,6 @@ async function handle_request(request: Request, env: Env, ctx: ExecutionContext,
 					{ status: 405, headers: { 'Content-Type': 'application/json', Allow: 'POST, DELETE, OPTIONS', ...CORS_HEADERS } },
 				);
 			}
-			let dedup_session_id: string | null = null;
-			let dedup_jsonrpc_id: string | number | null = null;
 			try {
 				// Snoop the inbound JSON-RPC body (POST only) BEFORE forwarding to the
 				// DO. Lets CF logs answer: what jsonrpc.id did the client send for this
@@ -531,31 +481,6 @@ async function handle_request(request: Request, env: Env, ctx: ExecutionContext,
 							query_len: parsed.params?.arguments?.query?.length ?? null,
 							query_preview: parsed.params?.arguments?.query?.slice(0, 120) ?? null,
 						});
-						// Duplicate-id defense: reject the second request if its
-						// (session_id, jsonrpc_id) pair is already in flight. Only
-						// applies to tools/call (the path with cross-mixup risk via
-						// the DO's requestToStreamMapping overwrite); initialize and
-						// notifications/* are short and idempotent enough to skip.
-						if (
-							session_id
-							&& parsed.id !== undefined
-							&& parsed.id !== null
-							&& parsed.method === 'tools/call'
-						) {
-							if (!try_register_inflight(session_id, parsed.id)) {
-								logger.warn('Rejecting duplicate JSON-RPC id', {
-									op: 'mcp_dup_id_reject',
-									request_id,
-									mcp_session_id: session_id,
-									jsonrpc_id: parsed.id,
-									method: parsed.method,
-									tool_name: parsed.params?.name ?? null,
-								});
-								return make_dupid_error_response(parsed.id, session_id);
-							}
-							dedup_session_id = session_id;
-							dedup_jsonrpc_id = parsed.id;
-						}
 					} catch (err) {
 						logger.debug('MCP inbound body capture failed (non-JSON?)', {
 							op: 'mcp_inbound_capture_error',
@@ -567,21 +492,6 @@ async function handle_request(request: Request, env: Env, ctx: ExecutionContext,
 				const response = await mcp_handler.fetch(request, env, ctx);
 				const duration = Date.now() - start_time;
 				logger.response(request.method, url.pathname, response.status, duration, { request_id });
-				// Release the in-flight slot. For SSE responses the body is still
-				// streaming when this function returns, so schedule a deferred
-				// release covering the longest answer fanout (~5 min). The 10-min
-				// TTL on the map is the ultimate safety net.
-				if (dedup_session_id !== null && dedup_jsonrpc_id !== null) {
-					const session_id = dedup_session_id;
-					const id = dedup_jsonrpc_id;
-					if (response.body && response.headers.get('content-type')?.includes('text/event-stream')) {
-						ctx.waitUntil(new Promise<void>((resolve) => {
-							setTimeout(() => { release_inflight(session_id, id); resolve(); }, 310_000);
-						}));
-					} else {
-						release_inflight(session_id, id);
-					}
-				}
 				if (
 					request.method === 'POST'
 					&& response.body
@@ -596,9 +506,6 @@ async function handle_request(request: Request, env: Env, ctx: ExecutionContext,
 					request_id,
 					error: err instanceof Error ? err.message : String(err),
 				});
-				if (dedup_session_id !== null && dedup_jsonrpc_id !== null) {
-					release_inflight(dedup_session_id, dedup_jsonrpc_id);
-				}
 				return add_cors_headers(Response.json({ error: 'MCP processing error' }, { status: 500 }));
 			}
 		}
