@@ -10,6 +10,12 @@ import { fetch_repo_overview } from './repo-overview.js';
 
 const logger = loggers.fetch();
 
+// README detection, used by fetch_raw_file for: (1) upgrading a repo-root README
+// on the default branch to the full repo overview, and (2) returning a non-root
+// README's raw markdown without the wrapper.
+const README_RE = /^readme(\.[a-z0-9]+)?$/i;
+const is_root_readme_path = (p?: string): boolean => !!p && !p.includes('/') && README_RE.test(p);
+
 // Resolve ambiguous blob/tree URLs where ref and path can't be separated (branch names with slashes).
 // Try splitting at each '/' from left to right — first successful API call wins.
 async function resolve_ambiguous_ref_path(
@@ -129,6 +135,17 @@ export async function fetch_raw_file(
 	if (!ref) {
 		throw new ProviderError(ErrorType.INVALID_INPUT, `Raw URL missing ref: ${owner}/${repo}`, 'github');
 	}
+	// Tweak 1: the repo-root README on the DEFAULT branch is better served as the full
+	// repo overview (description, stars, languages, AGENTS context + the README itself).
+	// A root README on a NON-default branch falls through to fetch that branch's raw file.
+	if (is_root_readme_path(path)) {
+		try {
+			const overview = await fetch_repo_overview(token, owner, repo);
+			if (ref === overview.metadata?.default_branch) return overview;
+		} catch (err) {
+			logger.debug('repo overview upgrade failed; serving raw README', { owner, repo, error: err instanceof Error ? err.message : String(err) });
+		}
+	}
 	const raw_url = path
 		? `https://raw.githubusercontent.com/${owner}/${repo}/${ref}/${path}`
 		: `https://raw.githubusercontent.com/${owner}/${repo}/${ref}`;
@@ -150,11 +167,18 @@ export async function fetch_raw_file(
 	const text = await resp.text();
 	const file_ext = (path ?? '').split('.').pop() ?? '';
 	const file_name = path ? (path.split('/').pop() ?? path) : ref;
+	// Tweak 2: a non-root README (e.g. packages/x/README.md) returns its raw markdown
+	// directly — the name/Repository/Ref/Size header + fenced wrapper just clutters
+	// README prose. Non-README files keep the wrapper for context.
+	const is_non_root_readme = !!path && path.includes('/') && README_RE.test(file_name);
+	const content = is_non_root_readme
+		? text
+		: `# ${file_name}\n\n**Repository:** ${owner}/${repo}\n**Ref:** \`${ref}\`\n**Size:** ${format_size(text.length)}\n\n---\n\n\`\`\`\`\`${file_ext}\n${text}\n\`\`\`\`\`\n\n---\n*Fetched via GitHub raw URL*\n`;
 
 	return {
 		url: `https://github.com/${owner}/${repo}/blob/${ref}/${path ?? ''}`,
 		title: `${path ?? ref} - ${owner}/${repo}`,
-		content: `# ${file_name}\n\n**Repository:** ${owner}/${repo}\n**Ref:** \`${ref}\`\n**Size:** ${format_size(text.length)}\n\n---\n\n\`\`\`\`\`${file_ext}\n${text}\n\`\`\`\`\`\n\n---\n*Fetched via GitHub raw URL*\n`,
+		content,
 		source_provider: 'github',
 		metadata: { resource_type: 'raw_file', path, ref },
 	};
