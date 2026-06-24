@@ -150,3 +150,6 @@ tools/*.pyc
 wrangler.toml
 .wrangler/
 
+# Aider AI pair-programming artifacts (chat/input/tags history)
+.aider*
+
