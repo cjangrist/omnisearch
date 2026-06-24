@@ -484,6 +484,24 @@ async function handle_request(request: Request, env: Env, ctx: ExecutionContext,
 
 		// MCP: delegate to the McpAgent DO handler.
 		if (url.pathname === '/mcp') {
+			// Decline the OPTIONAL standalone GET SSE notification stream with 405.
+			// Root cause (verified 2026-06-23): the agents McpAgent holds the GET
+			// stream open per session; once open it head-of-line-blocks every
+			// subsequent POST on SDK/undici clients (mcp-inspector + any
+			// @modelcontextprotocol/sdk client hang → -32001 Request timed out), and
+			// these long-held GET streams are also the bulk of the DO's
+			// responseStreamDisconnected/clientDisconnected noise. This server sends
+			// NO server->client messages, so the stream is unnecessary. The MCP
+			// Streamable-HTTP spec explicitly permits 405 here, and the SDK client
+			// treats it as valid (client/streamableHttp.js: "handle 405 as a valid
+			// response") and falls back to POST response streams — which work.
+			if (request.method === 'GET') {
+				logger.info('Declining standalone GET SSE stream with 405', { op: 'mcp_get_405', request_id });
+				return new Response(
+					JSON.stringify({ jsonrpc: '2.0', error: { code: -32000, message: 'Method Not Allowed: this server does not offer a standalone GET SSE stream' }, id: null }),
+					{ status: 405, headers: { 'Content-Type': 'application/json', Allow: 'POST, DELETE, OPTIONS', ...CORS_HEADERS } },
+				);
+			}
 			let dedup_session_id: string | null = null;
 			let dedup_jsonrpc_id: string | number | null = null;
 			try {
