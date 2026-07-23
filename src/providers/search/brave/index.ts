@@ -30,8 +30,6 @@ interface BraveSearchResponse {
 
 export class BraveSearchProvider implements SearchProvider {
 	name = 'brave';
-	description =
-		'Privacy-focused search with operators: site:, -site:, filetype:/ext:, intitle:, inurl:, inbody:, inpage:, lang:, loc:, before:, after:, +term, -term, "exact". Best for technical content and privacy-sensitive queries.';
 
 	async search(params: BaseSearchParams): Promise<SearchResult[]> {
 		const api_key = validate_api_key(

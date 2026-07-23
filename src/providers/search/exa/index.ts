@@ -51,8 +51,6 @@ interface ExaSearchResponse {
 
 export class ExaSearchProvider implements SearchProvider {
 	name = 'exa';
-	description =
-		'AI-powered web search using neural and keyword search. Optimized for AI applications with semantic understanding, content extraction, and research capabilities.';
 
 	async search(params: BaseSearchParams): Promise<SearchResult[]> {
 		const api_key = validate_api_key(
@@ -109,14 +107,6 @@ export class ExaSearchProvider implements SearchProvider {
 					result.text || result.summary || 'No content available',
 				score: result.score || 0,
 				source_provider: this.name,
-				metadata: {
-					id: result.id,
-					author: result.author,
-					publishedDate: result.publishedDate,
-					highlights: result.highlights,
-					autopromptString: data.autopromptString,
-					resolvedSearchType: data.resolvedSearchType,
-				},
 			}));
 		} catch (error) {
 			handle_provider_error(error, this.name, 'fetch search results');

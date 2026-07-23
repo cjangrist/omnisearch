@@ -34,8 +34,6 @@ interface PerplexitySearchResponse {
 
 export class PerplexitySearchProvider implements SearchProvider {
 	name = 'perplexity';
-	description =
-		'Perplexity web search via sonar model. Returns citation URLs from AI-grounded web search.';
 
 	async search(params: BaseSearchParams): Promise<SearchResult[]> {
 		const api_key = validate_api_key(

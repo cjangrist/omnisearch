@@ -6,7 +6,6 @@ export interface SearchResult {
 	snippet: string;
 	score?: number;
 	source_provider: string;
-	metadata?: Record<string, unknown>;
 }
 
 export interface BaseSearchParams {

@@ -31,8 +31,6 @@ interface FirecrawlSearchResponse {
 
 export class FirecrawlSearchProvider implements SearchProvider {
 	name = 'firecrawl';
-	description =
-		'Web search via Firecrawl /v2/search endpoint. Returns web results with titles, URLs and descriptions.';
 
 	async search(params: BaseSearchParams): Promise<SearchResult[]> {
 		const api_key = validate_api_key(

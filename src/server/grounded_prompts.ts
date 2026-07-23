@@ -122,7 +122,7 @@ Sentinels are for the case where the FETCH produced no real page content. If the
 // fallback when retry also matched.
 
 // TIGHT — high-confidence junk indicators. Always fire regardless of length.
-export const GROUNDED_JUNK_TIGHT_PATTERNS: readonly string[] = [
+const GROUNDED_JUNK_TIGHT_PATTERNS: readonly string[] = [
 	// Paywalls
 	'subscribe to continue reading',
 	'subscribe to read',
@@ -162,7 +162,7 @@ export const GROUNDED_JUNK_TIGHT_PATTERNS: readonly string[] = [
 // AMBIGUOUS — phrases that legitimately appear in long-form prose. Gate to
 // short bodies (≤ JUNK_AMBIGUOUS_MAX_CONTENT_CHARS) where the wall IS the
 // page content rather than a passing mention.
-export const GROUNDED_JUNK_AMBIGUOUS_PATTERNS: readonly string[] = [
+const GROUNDED_JUNK_AMBIGUOUS_PATTERNS: readonly string[] = [
 	'access denied',
 	'before accessing',
 	'security check',
@@ -195,7 +195,7 @@ export const detect_grounded_junk = (content: string): string | undefined => {
 // trivial exact-match. When detected, the pipeline maps the snippet back to
 // fallback (original aggregated snippet) so users see real prose instead of
 // "[no usable content]".
-export const GROUNDED_SENTINELS: readonly string[] = [
+const GROUNDED_SENTINELS: readonly string[] = [
 	'[no usable content]',
 	'[navigation only]',
 	'[page not found]',

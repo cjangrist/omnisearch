@@ -46,7 +46,7 @@ export const initialize_providers = () => {
 			providers: Array.from(new_search),
 			count: new_search.size,
 		});
-	} else if (!has_any_search_provider()) {
+	} else {
 		logger.warn('No web search providers available', {
 			op: 'init_providers',
 			category: 'search',

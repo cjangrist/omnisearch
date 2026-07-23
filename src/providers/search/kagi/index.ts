@@ -33,8 +33,6 @@ interface KagiSearchResponse {
 
 export class KagiSearchProvider implements SearchProvider {
 	name = 'kagi';
-	description =
-		'High-quality search with operators: site:, -site:, filetype:/ext:, intitle:, inurl:, inbody:, inpage:, lang:, loc:, before:, after:, +term, -term, "exact". Privacy-focused with specialized knowledge indexes. Best for research and technical documentation.';
 
 	async search(params: BaseSearchParams): Promise<SearchResult[]> {
 		const api_key = validate_api_key(

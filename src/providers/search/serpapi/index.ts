@@ -32,8 +32,6 @@ interface SerpApiSearchResponse {
 
 export class SerpApiSearchProvider implements SearchProvider {
 	name = 'serpapi';
-	description =
-		'Google search via SerpAPI. Uses google_light engine for fast organic results with snippets. Supports all Google search operators (site:, filetype:, intitle:, etc.).';
 
 	async search(params: BaseSearchParams): Promise<SearchResult[]> {
 		const api_key = validate_api_key(

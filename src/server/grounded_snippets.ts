@@ -47,7 +47,7 @@ const logger = loggers.search();
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
-export type GroundingOutcome =
+type GroundingOutcome =
 	| 'grounded'
 	| 'fallback:fetch_exhausted'
 	| 'fallback:fetch_too_short'
@@ -255,8 +255,6 @@ interface FetchAndGroundResult {
 	fetch_result?: OmnifetchResult;
 	snippet?: string;
 	error?: string;
-	junk_reason?: string;
-	sentinel?: string;
 }
 
 const fetch_and_ground = async (
@@ -300,7 +298,7 @@ const fetch_and_ground = async (
 			reason: 'junk',
 			junk_reason,
 		});
-		return { kind: 'fetch_junk', fetch_result, junk_reason };
+		return { kind: 'fetch_junk', fetch_result };
 	}
 
 	// LLM
@@ -329,7 +327,7 @@ const fetch_and_ground = async (
 		const sentinel = detect_grounded_sentinel(llm_out.snippet);
 		if (sentinel) {
 			log_phase(ctx, 'llm_sentinel', pipeline_t0, llm_t0, { sentinel });
-			return { kind: 'llm_sentinel', fetch_result, snippet: llm_out.snippet, sentinel };
+			return { kind: 'llm_sentinel', fetch_result, snippet: llm_out.snippet };
 		}
 		return { kind: 'success', fetch_result, snippet: llm_out.snippet };
 	} catch (err) {
@@ -373,7 +371,6 @@ const run_pipeline = async (
 const fetch_then_ground = async (
 	query: string,
 	result: RankedWebResult,
-	signal: AbortSignal | undefined,
 	index: number,
 ): Promise<PipelineResult> => {
 	const pipeline_t0 = Date.now();
@@ -393,11 +390,7 @@ const fetch_then_ground = async (
 	// into fetch_url → extract_grounded_snippet's make_signal(timeout, signal),
 	// so the outstanding omnifetch + LLM HTTP requests fail fast with AbortError.
 	const deadline_controller = new AbortController();
-	const pipeline_signal = signal
-		? (typeof AbortSignal.any === 'function'
-			? AbortSignal.any([signal, deadline_controller.signal])
-			: deadline_controller.signal)
-		: deadline_controller.signal;
+	const pipeline_signal = deadline_controller.signal;
 	const run = await with_deadline<PipelineRunResult>(
 		run_pipeline(ctx, pipeline_t0, query, result.url, pipeline_signal),
 		config.snippet_grounding.llm.per_url_deadline_ms,
@@ -465,7 +458,7 @@ export interface GroundingStats {
 	retried_count: number;
 }
 
-export interface GroundingOutput {
+interface GroundingOutput {
 	results: RankedWebResult[];
 	stats: GroundingStats;
 }
@@ -482,7 +475,6 @@ const TRANSIENT_GROUNDING_OUTCOMES: ReadonlySet<GroundingOutcome> = new Set<Grou
 export const ground_top_results = async (
 	query: string,
 	results: RankedWebResult[],
-	signal?: AbortSignal,
 ): Promise<GroundingOutput> => {
 	if (results.length === 0) return { results, stats: { transient_fail_count: 0, grounded_count: 0, total_urls: 0, makespan_ms: 0, p50_ms: 0, p95_ms: 0, max_ms: 0, timeout_count: 0, retried_count: 0 } };
 
@@ -502,7 +494,7 @@ export const ground_top_results = async (
 	const settled = await run_with_concurrency(
 		results,
 		cfg.concurrency,
-		(r, i) => fetch_then_ground(query, r, signal, i),
+		(r, i) => fetch_then_ground(query, r, i),
 	);
 
 	// Reduce settled results into final list + aggregate metrics. Rejected
