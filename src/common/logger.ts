@@ -189,7 +189,6 @@ export const loggers = {
 	config: () => new Logger('config'),
 	providers: () => new Logger('providers'),
 	search: (provider?: string) => new Logger(provider ? `search:${provider}` : 'search'),
-	aiResponse: (provider?: string) => new Logger(provider ? `ai_response:${provider}` : 'ai_response'),
 	server: () => new Logger('server'),
 	rest: () => new Logger('rest_api'),
 	mcp: () => new Logger('mcp'),

@@ -29,7 +29,7 @@ Shared infrastructure used by every other module. Types, HTTP, logging, R2 traci
   - `retry_with_backoff(fn, options)` — `pRetry` wrapper. Only retries `ProviderError(PROVIDER_ERROR)` (transient); `RATE_LIMIT` and `INVALID_INPUT` never retry.
   - `handle_rate_limit(response)` — reads `Retry-After`, throws `ProviderError(RATE_LIMIT)`.
 - **`logger.ts`** — Structured JSON logger with AsyncLocalStorage<request_id> scoping.
-  - `loggers.<component>()` factories: `worker`, `config`, `rest`, `http`, `aiResponse`, `fetch`, `search`, `cache`, `auth`.
+  - `loggers.<component>()` factories: `worker`, `config`, `rest`, `http`, `fetch`, `search`.
   - `run_with_request_id(request_id, fn)` — scopes the ID through ALS so every log line emits with `request_id` set, even from deeply nested calls.
   - Level threshold: `info` by default; `globalThis.__LOG_LEVEL` overridable.
 - **`r2_trace.ts`** — R2-backed request/response tracing.

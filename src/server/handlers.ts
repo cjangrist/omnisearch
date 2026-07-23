@@ -9,7 +9,7 @@ export const setup_handlers = (server: McpServer) => {
 		'provider-status',
 		'omnisearch://providers/status',
 		{
-			description: 'Current status of all providers (search, AI response, fetch)',
+			description: 'Current status of all providers (search, fetch)',
 			mimeType: 'application/json',
 		},
 		async (uri) => {
@@ -20,21 +20,16 @@ export const setup_handlers = (server: McpServer) => {
 						mimeType: 'application/json',
 						text: JSON.stringify(
 							{
-								status: (active_providers.search.size + active_providers.ai_response.size + active_providers.fetch.size) > 0 ? 'operational' : 'unavailable',
+								status: (active_providers.search.size + active_providers.fetch.size) > 0 ? 'operational' : 'unavailable',
 								providers: {
 									search: Array.from(active_providers.search),
-									ai_response: Array.from(
-										active_providers.ai_response,
-									),
 									fetch: Array.from(active_providers.fetch),
 								},
 								available_count: {
 									search: active_providers.search.size,
-									ai_response: active_providers.ai_response.size,
 									fetch: active_providers.fetch.size,
 									total:
 										active_providers.search.size +
-										active_providers.ai_response.size +
 										active_providers.fetch.size,
 								},
 							},
@@ -52,7 +47,7 @@ export const setup_handlers = (server: McpServer) => {
 		'provider-info',
 		new ResourceTemplate('omnisearch://providers/{provider}/info', { list: undefined }),
 		{
-			description: 'Information about a specific provider (search, AI, or fetch)',
+			description: 'Information about a specific provider (search or fetch)',
 			mimeType: 'application/json',
 		},
 		async (uri, { provider }) => {
@@ -61,7 +56,6 @@ export const setup_handlers = (server: McpServer) => {
 			// Check if provider is available
 			const isAvailable =
 				active_providers.search.has(providerName) ||
-				active_providers.ai_response.has(providerName) ||
 				active_providers.fetch.has(providerName);
 
 			if (!isAvailable) {
@@ -73,7 +67,6 @@ export const setup_handlers = (server: McpServer) => {
 			// Derive capabilities from which category the provider belongs to
 			const capabilities: string[] = [];
 			if (active_providers.search.has(providerName)) capabilities.push('web_search');
-			if (active_providers.ai_response.has(providerName)) capabilities.push('ai_response');
 			if (active_providers.fetch.has(providerName)) capabilities.push('fetch');
 
 			return {

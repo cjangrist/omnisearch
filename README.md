@@ -5,9 +5,9 @@
 [![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers-orange?logo=cloudflare)](https://workers.cloudflare.com/)
 [![License](https://img.shields.io/badge/license-MIT-lightgrey)](LICENSE)
 
-> Multi-provider search, AI answers, and universal URL fetching — aggregated, ranked, cached at the edge, and fully traced to R2.
+> Multi-provider search and universal URL fetching — aggregated, ranked, cached at the edge, and fully traced to R2.
 
-Omnisearch MCP is a production-grade [Model Context Protocol](https://modelcontextprotocol.io/) server running on Cloudflare Workers + Durable Objects. It fans out queries to many search engines and AI answer providers in parallel, fetches content from any URL via a deep multi-provider waterfall, returns unified results with global KV caching, and writes every request/response to R2 for incident debugging.
+Omnisearch MCP is a production-grade [Model Context Protocol](https://modelcontextprotocol.io/) server running on Cloudflare Workers + Durable Objects. It fans out queries to many search engines in parallel, fetches content from any URL via a deep multi-provider waterfall, returns unified results with global KV caching, and writes every request/response to R2 for incident debugging.
 
 ---
 
@@ -18,7 +18,6 @@ Omnisearch MCP is a production-grade [Model Context Protocol](https://modelconte
 | Resilience | Single point of failure | Many providers with automatic failover |
 | Search | One engine's blind spots | Multiple engines in parallel, RRF-ranked, cross-deduplicated |
 | Snippets | Engine-supplied (often boilerplate / SEO) | Top-N regenerated from actual page content via Groq, query-framed |
-| AI Answers | One model's perspective | Consensus across multiple AI providers with citations |
 | URL Fetching | Blocked by paywalls, CAPTCHAs | Multi-provider waterfall with social media extraction |
 | Performance | Cold on every call | Global KV cache (36h TTL) — cache hits return in ~80ms |
 | Connectivity | Timeout on long operations | SSE keepalive with event-boundary buffering, whitespace-heartbeat tolerant |
@@ -59,12 +58,10 @@ omnisearch/
     │   └── env.ts                           # config object + initialize_config(env) + validate_config()
     ├── providers/
     │   ├── index.ts                         # initialize_providers() — atomic-swap registries
-    │   ├── ai_response/                     # AI answer providers (5 named + 4 LLM bridge sub-providers + 1 special gemini-grounded)
     │   ├── fetch/                           # 28 URL fetch providers — markdown/text/structured extraction
     │   ├── search/                          # 11 web-search providers — query → ranked SearchResult[]
     │   └── unified/                         # provider-abstraction dispatchers — auto-built from registrations
     ├── server/
-    │   ├── answer_orchestrator.ts           # parallel AI fanout + 295s deadline + AbortController + KV cache + gemini-grounded inline
     │   ├── fetch_orchestrator.ts            # waterfall + domain breakers + parallel multi-winner racing + KV cache + skip_providers
     │   ├── grounded_prompts.ts              # snippet-writer system prompt + junk + sentinel detectors
     │   ├── grounded_snippets.ts             # post-RRF Groq grounding stage — bounded worker pool + per-URL deadline + retry path
@@ -85,7 +82,7 @@ Each subfolder has its own `AGENTS.md` with a file-by-file breakdown — start a
 
 ---
 
-## Three Tools
+## Two Tools
 
 ### `web_search` — Parallel-fanout search with RRF ranking + grounded snippets
 
@@ -94,14 +91,6 @@ Fans out the same query to all configured search engines simultaneously. Dedupli
 After ranking — if `GROQ_API_KEY` is set — a **grounded-snippet stage** kicks in: the top-20 URLs are fetched in parallel through the same waterfall the `fetch` tool uses, and Groq (`openai/gpt-oss-120b`) writes a query-framed snippet describing what each page actually says. The grounded snippet replaces the engine-supplied one. Each result reports `snippet_source` ∈ `{ aggregated, grounded, fallback }` so callers can see which path produced the snippet. Default ON; set `grounded_snippets:false` per call (or omit `GROQ_API_KEY`) to return raw aggregated provider snippets at minimum latency.
 
 Tool input: `query`, optional `timeout_ms` (omitted = wait for all providers, full dedup), optional `include_snippets` (default `true`), optional `grounded_snippets` (default `true` when `GROQ_API_KEY` is configured).
-
-### `answer` — Consensus AI answers with citations
-
-Queries every configured AI provider in parallel — each independently searches the web and synthesizes its own answer with citations. When a Gemini-grounded key is configured AND a search provider exists, an extra `gemini-grounded` task feeds web_search_fanout results into Gemini's `url_context` tool. Returns all answers in one response so callers can compare consensus vs. divergence.
-
-Hard global deadline 295 seconds (4 minutes 55 seconds); pending providers are aborted via `AbortController` and reported as `Timed out (global deadline)`. Only complete fanouts (zero failed/timed-out providers) are cached — partial results would otherwise lock a one-provider-short answer in for 36 hours.
-
-Tool input: `query` only.
 
 ### `fetch` — Universal URL content extraction
 
@@ -121,7 +110,7 @@ Tool inputs:
 - `url` (required)
 - `skip_providers` — comma-separated string OR JSON-encoded array OR native string-array. Triggers a **2-provider fanout** (returning the second under `alternative_results` for cross-provider validation), bypasses the cache, and roughly doubles cost+latency. Validated against the active provider set; typos are rejected at the MCP and REST layers, with a defense-in-depth pass at orchestrator entry.
 
-`skip_providers` exists ONLY on the `fetch` tool. The `answer` and `web_search` tools do not accept it.
+`skip_providers` exists ONLY on the `fetch` tool. The `web_search` tool does not accept it.
 
 ---
 
@@ -133,7 +122,7 @@ git clone https://github.com/cjangrist/omnisearch.git
 cd omnisearch
 npm ci
 
-# 2. Set Cloudflare secrets — at minimum one search/answer/fetch key each
+# 2. Set Cloudflare secrets — at minimum one search/fetch key each
 npx wrangler secret put TAVILY_API_KEY
 npx wrangler secret put FIRECRAWL_API_KEY
 # ... see "Configuration" below for the full list
@@ -197,7 +186,7 @@ curl "https://your-worker.workers.dev/researcher?query=rust+memory+safety&api_ke
 
 # Health — actual provider count varies by which keys are configured
 curl https://your-worker.workers.dev/health
-# {"status":"ok","name":"omnisearch-mcp","version":"1.0.0","providers":47}
+# {"status":"ok","name":"omnisearch-mcp","version":"1.0.0","providers":39}
 ```
 
 ---
@@ -206,34 +195,22 @@ curl https://your-worker.workers.dev/health
 
 Secrets are managed via `wrangler secret put` (or the Doppler-based workflow described in `.env.example`). `wrangler.toml` only contains bindings — no secret values.
 
-### Web Search providers (10) — `web_search` tool
+### Web Search providers — `web_search` tool
 
-Set at least one. Several keys are shared with the corresponding answer / fetch provider.
+Set at least one. Several keys are shared with the corresponding fetch provider.
 
 | Variable | Provider | Notes |
 |----------|----------|-------|
-| `TAVILY_API_KEY` | [Tavily](https://tavily.com) | Shared with `tavily_answer` + tavily fetch |
-| `BRAVE_API_KEY` | [Brave](https://search.brave.com) | Brave Web Search (separate key from `BRAVE_ANSWER_API_KEY`) |
-| `KAGI_API_KEY` | [Kagi](https://kagi.com) | Shared with `kagi_fastgpt` |
-| `EXA_API_KEY` | [Exa](https://exa.ai) | Neural search; shared with `exa_answer` |
+| `TAVILY_API_KEY` | [Tavily](https://tavily.com) | Shared with tavily fetch |
+| `BRAVE_API_KEY` | [Brave](https://search.brave.com) | Brave Web Search |
+| `KAGI_API_KEY` | [Kagi](https://kagi.com) | Kagi web search |
+| `EXA_API_KEY` | [Exa](https://exa.ai) | Neural search |
 | `SERPAPI_API_KEY` | [SerpAPI](https://serpapi.com) | `google_light` engine; key reused for fetch (YouTube transcripts) |
 | `LINKUP_API_KEY` | [Linkup](https://linkup.so) | Shared with linkup fetch |
 | `FIRECRAWL_API_KEY` | [Firecrawl](https://firecrawl.dev) | Shared with firecrawl fetch |
 | `YOU_API_KEY` | [You.com](https://you.com) | Shared with you fetch |
-| `PERPLEXITY_API_KEY` | [Perplexity](https://perplexity.ai) | Sonar; shared with `perplexity` answer |
+| `PERPLEXITY_API_KEY` | [Perplexity](https://perplexity.ai) | Sonar web search |
 | `KIMI_API_KEY` | [Kimi](https://platform.kimi.com) | Currently disabled by default per ROI analysis — see `docs/kimi-search-roi-analysis.md`. Requires `SCRAPFLY_API_KEY` too. |
-
-### AI Answer providers — `answer` tool
-
-| Variable | Provider |
-|----------|----------|
-| `PERPLEXITY_API_KEY` | Perplexity Sonar Pro |
-| `KAGI_API_KEY` | Kagi FastGPT (~900ms typical) |
-| `EXA_API_KEY` | Exa Answer (livecrawl=fallback) |
-| `BRAVE_ANSWER_API_KEY` | Brave Answer (SSE streaming with inline citation tags) |
-| `TAVILY_API_KEY` | Tavily Answer (`include_answer=advanced`) |
-| `LLM_SEARCH_BASE_URL` + `LLM_SEARCH_API_KEY` | OpenAI-compatible bridge — registers 4 separate provider entries (`chatgpt`, `claude`, `gemini`, `grok`) sharing the same endpoint. Optional model overrides: `LLM_SEARCH_CHATGPT_MODEL`, `LLM_SEARCH_CLAUDE_MODEL`, `LLM_SEARCH_GEMINI_MODEL`, `LLM_SEARCH_GROK_MODEL`. |
-| `GEMINI_GROUNDED_API_KEY` | Native Gemini API with `url_context` tool — invoked specially: receives `web_search_fanout` results as grounding sources. Optional `GEMINI_GROUNDED_MODEL`. |
 
 ### Fetch providers (28) — `fetch` tool
 
@@ -304,14 +281,13 @@ OMNISEARCH_API_KEY=your-secret-key-here
 
 ## Caching
 
-All three tools cache through Cloudflare KV with a **36-hour TTL** (129,600 seconds) and SHA-256-hashed keys.
+Both tools cache through Cloudflare KV with a **36-hour TTL** (129,600 seconds) and SHA-256-hashed keys.
 
-- **Key shape**: `<prefix>:<sha256(value)>` where prefix is `search:`, `answer:`, or `fetch:`. SHA-256 keeps every key under KV's 512-byte limit regardless of input length.
+- **Key shape**: `<prefix>:<sha256(value)>` where prefix is `search:` or `fetch:`. SHA-256 keeps every key under KV's 512-byte limit regardless of input length.
 - **Search cache binds query**: `make_cache_key(query, options)` adds a `\0sqf=true` suffix when `skip_quality_filter` is set, plus a `\0gnd=true` suffix when grounded snippets are active for the call, so raw / filtered / grounded / non-grounded fanouts don't collide. Defense-in-depth: cached entries also store `query` and are rejected if `cached.query !== query`.
-- **Answer cache binds query**: same query-echo defense.
 - **Fetch cache binds requested URL**: cached entries store `requested_url`; the read path requires `cached.requested_url === url`. The MCP tool's `skip_providers` path bypasses the cache entirely and skips the cache write — preserving the multi-provider compare semantic (returning two different providers under `alternative_results` would otherwise pollute the singular cache).
 - **Validators** (`is_valid_cached_*` in each orchestrator): full structural validation on every read. A legacy or corrupted entry is silently treated as a miss so downstream code can never crash on undefined fields.
-- **Partial fanouts are NOT cached**. If any provider failed or timed out, search and answer skip the write — locking in a one-provider-short result for 36h would prevent recovery once the upstream comes back.
+- **Partial fanouts are NOT cached**. If any provider failed or timed out, search skips the write — locking in a one-provider-short result for 36h would prevent recovery once the upstream comes back.
 - **Cache hits return in ~80ms** regardless of edge location.
 
 ---
@@ -326,7 +302,7 @@ Cloudflare Workers is a single isolate handling many concurrent requests. Severa
 - **Durable Object (`OmnisearchMCP`) ctx scoping (R4F01)**: each MCP tool callback closure captures its own `get_ctx` getter — `register_tools(server, () => this.ctx)` — instead of pulling from a shared field on the registry. Reason: `registry` is module-scoped and shared across DO instances in the same isolate, so a per-DO ctx field on the registry would be overwritten by the most recent registration. Capturing `get_ctx` per-closure keeps every `McpServer`'s handlers bound to the DO that registered them. Without this, MCP-invoked tool R2 traces become detached fire-and-forget promises that the runtime can cancel when the DO finishes its current invocation.
 - **Atomic provider registry swap**: `initialize_providers()` builds new Sets locally, then assigns them to `active_providers` in one statement. Concurrent reads never see an empty state.
 - **Init memoization**: both the Worker fetch path (`ensure_rest_initialized`) and the DO (`init`) memoize a successful initialization promise, but reset it to `undefined` on rejection so a transient secret-load failure doesn't permanently brick the isolate.
-- **Cancellation**: search providers, AI providers, and the fanouts all accept `AbortSignal` and combine the external signal with deadline signals via `AbortSignal.any` (with a polyfill in `utils.ts/make_signal`). When the answer fanout's 295s deadline fires, the orchestrator calls `abort_controller.abort()` to cancel in-flight provider HTTP requests; late-arriving promises are guarded with an `is_done` flag so they can't mutate result arrays after the deadline.
+- **Cancellation**: search providers and the fanouts all accept `AbortSignal` and combine the external signal with deadline signals via `AbortSignal.any` (with a polyfill in `utils.ts/make_signal`). When a deadline fires, the orchestrator aborts in-flight provider HTTP requests; late-arriving promises are guarded with an `is_done` flag so they can't mutate result arrays after the deadline.
 - **`nodejs_compat` flag**: required in `wrangler.toml` so `node:async_hooks` AsyncLocalStorage is provided by workerd. Without it, request-id and execution-context scoping silently no-op, leading to log cross-contamination and orphaned R2 trace writes.
 
 ### SSE keepalive (Claude web 45s timeout workaround)
@@ -337,15 +313,15 @@ Cloudflare Workers is a single isolate handling many concurrent requests. Severa
 
 ## Tracing — R2
 
-Every request to the three tools (and every nested HTTP call inside them) is captured to `TRACE_BUCKET` (R2) as a single pretty-formatted JSON document. Path layout:
+Every request to the two tools (and every nested HTTP call inside them) is captured to `TRACE_BUCKET` (R2) as a single pretty-formatted JSON document. Path layout:
 
 ```
-request_traces/tool={search|answer|fetch|web_search}/date=YYYY-MM-DD/hour=HH/trace_id=<uuid>.json
+request_traces/tool={search|fetch|web_search}/date=YYYY-MM-DD/hour=HH/trace_id=<uuid>.json
 ```
 
 Each document includes:
 
-- `trace_id`, `parent_trace_id` (e.g. answer fanout's gemini-grounded child links to the inner web_search trace)
+- `trace_id`, `parent_trace_id`
 - `tool`, `started_at`, `completed_at`, `total_duration_ms`, `cache_hit`
 - `request_environment` (query/url/options)
 - `orchestrator.{strategy, active_providers, decisions[]}` — full decision log (`waterfall_step`, `breaker_match`, `cache_hit`, `fanout_complete`, etc.)
@@ -380,19 +356,19 @@ Sensitive query params (`api_key`, `key`, `token`, `app_id`, `x-api-key`, `apike
                     |          +--------+--------+              |
                     |                   | miss                  |
                     |     +-------------+-------------+         |
-                    |     v             v             v         |
-                    |  Web Search   AI Answer    Fetch Race     |
-                    |   Fanout       Fanout       Waterfall     |
-                    |     |             |             |         |
-                    |     v             v             v         |
-                    |  RRF Rank    Deadline +     Domain        |
-                    |  + Snippet   AbortCtrl     Breakers +     |
-                    |  Collapse    + Gemini      Multi-Winner   |
-                    |     |        Grounded      Parallel Race  |
-                    |     v             |             |         |
-                    |  Groq Ground      |             |         |
-                    |  (top-N URLs)     |             |         |
-                    |     |             |             |         |
+                    |     v                           v         |
+                    |  Web Search                  Fetch Race   |
+                    |   Fanout                     Waterfall    |
+                    |     |                           |         |
+                    |     v                           v         |
+                    |  RRF Rank                   Domain        |
+                    |  + Snippet                   Breakers +    |
+                    |  Collapse                    Multi-Winner  |
+                    |     |                        Parallel Race |
+                    |     v                           |         |
+                    |  Groq Ground                    |         |
+                    |  (top-N URLs)                   |         |
+                    |     |                           |         |
                     |     +-------------+-------------+         |
                     |                   v                       |
                     |            R2 Trace Bucket                |
@@ -410,7 +386,7 @@ Sensitive query params (`api_key`, `key`, `token`, `app_id`, `x-api-key`, `apike
 
 4. **Grounded snippets** — engine-supplied snippets are notoriously SEO-padded, off-topic, or boilerplate. After RRF picks the top-20, each URL is fetched through the same waterfall the `fetch` tool uses (concurrency-capped to 3, per-URL hard deadline 15 s) and Groq (`openai/gpt-oss-120b`) writes a query-framed snippet from the actual page body. Pre-Groq pattern detection (paywall / login-wall / cookie-wall / JS-shell / bot-challenge) and post-Groq sentinel detection (`[no usable content]`, `[navigation only]`, `[page not found]`, `[search results page]`, `[login required]`) trigger a single retry through the waterfall with `skip_providers={attempt-1 winner}` — the search engines have already vouched for relevance, so a second fetcher is more useful than re-asking the model. Failures fall back transparently to the original aggregated snippet (`snippet_source: 'fallback'`) so a single bad URL never breaks the result set. Failure outcomes are classified into 8 buckets and reported via a single `grounding_aggregate` log line per call (grounded ratio, p50/p95/max latency, provider wins, retry count, timeout count). The model choice (120B over 20B) is deliberate — the 20B emitted degenerate-sampling output under detailed-prompt + 6k-token-context load.
 
-5. **Multi-provider fanout IS the redundancy strategy** — `answer_orchestrator` deliberately doesn't retry individual providers (`retry_with_backoff` is NOT used here). Retrying doubles worst-case latency for rare gains; the fanout already has redundancy.
+5. **Multi-provider fanout IS the redundancy strategy** — the search fanout deliberately doesn't retry individual providers (`retry_with_backoff` is NOT used here). Retrying doubles worst-case latency for rare gains; the fanout already has redundancy.
 
 6. **Multi-winner parallel race in fetch** — when `skip_providers` triggers `target_count = 2`, parallel steps collect successes up to the target rather than `Promise.any`-ing the first. Once settled, late-arriving rejections are dropped from both `ctx.failed` and the trace — the public response and the trace tell the same story.
 
@@ -434,7 +410,7 @@ The codebase uses a registry pattern. Adding a search provider:
 4. **Register** — one line in `src/providers/unified/web_search.ts`'s `PROVIDERS` array
 5. **Add to `.env.example`** for documentation
 
-The registry auto-detects availability from environment variables; only providers with non-empty trimmed keys are instantiated. Same flow for `ai_response/` and `fetch/`. For fetch, also consider whether the new provider needs a slot in `fetch_orchestrator.ts CONFIG.waterfall` (and a parallel update to `config.yaml` if the YAML is meant to stay in sync as documentation).
+The registry auto-detects availability from environment variables; only providers with non-empty trimmed keys are instantiated. Same flow for `fetch/`. For fetch, also consider whether the new provider needs a slot in `fetch_orchestrator.ts CONFIG.waterfall` (and a parallel update to `config.yaml` if the YAML is meant to stay in sync as documentation).
 
 ---
 
@@ -481,7 +457,7 @@ R2 traces are queryable via the partition path — list by tool, date, hour for 
 
 ### Known issues
 
-- **Empty MCP envelope under high concurrency** — see `docs/mcp-empty-payload-anomaly.md`. Under 3+ concurrent long-running answer calls, ~20% return empty JSON-RPC envelopes. Workaround: serial calls. Not fixed at time of writing.
+- **Empty MCP envelope under high concurrency** — see `docs/mcp-empty-payload-anomaly.md`. Under 3+ concurrent long-running tool calls, ~20% return empty JSON-RPC envelopes. Workaround: serial calls. Not fixed at time of writing.
 
 ---
 

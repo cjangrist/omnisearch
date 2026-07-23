@@ -1,17 +1,16 @@
 # AGENTS.md — src/providers/
 
-Provider adapters for the three tools, plus unified dispatchers and provider-set initialization. Every external API integration lives here.
+Provider adapters for the two tools, plus unified dispatchers and provider-set initialization. Every external API integration lives here.
 
 ## Files
 
-- **`index.ts`** — `initialize_providers()` — atomic-swap registry initialization. Builds new `Set<string>`s for `active_providers.search`, `active_providers.ai_response`, `active_providers.fetch` from each unified module's `get_active_*_providers()`, then assigns them in one statement. Concurrent reads cannot observe a partially-built state. Also constructs the three `Unified*Provider` instances and registers them with the `ToolRegistry` in `../server/tools.ts`.
+- **`index.ts`** — `initialize_providers()` — atomic-swap registry initialization. Builds new `Set<string>`s for `active_providers.search`, `active_providers.fetch` from each unified module's `get_active_*_providers()`, then assigns them in one statement. Concurrent reads cannot observe a partially-built state. Also constructs the two `Unified*Provider` instances and registers them with the `ToolRegistry` in `../server/tools.ts`.
 
 ## Subfolders
 
 - **`search/`** — 11 web-search providers (`tavily`, `brave`, `kagi`, `exa`, `firecrawl`, `perplexity`, `serpapi`, `linkup`, `you`, `kimi`, `parallel`). Each implements `SearchProvider` and exports a `registration` object. See `search/AGENTS.md`.
-- **`ai_response/`** — AI answer providers. 7 leaf folders (`brave_answer`, `exa_answer`, `gemini_grounded`, `kagi_fastgpt`, `llm_search`, `perplexity`, `tavily_answer`) but `llm_search` exports a 4-element `registration` array (chatgpt, claude, gemini, grok) so the unified registry sees 9 entries. `gemini_grounded` is special — it's invoked directly from `answer_orchestrator.ts`, not via the unified dispatcher. See `ai_response/AGENTS.md`.
 - **`fetch/`** — 28 URL fetch providers. See `fetch/AGENTS.md` for the full list. Most are general-purpose markdown-extractors; three are specialists (github, supadata, sociavault) and run as domain breakers in the waterfall.
-- **`unified/`** — Three dispatchers: `web_search.ts`, `ai_search.ts`, `fetch.ts`. Each imports every leaf module's registration, builds a `PROVIDERS` array, and exposes a `Unified<Category>Provider` class that filters by `key()?.trim()` at construction. See `unified/AGENTS.md`.
+- **`unified/`** — Two dispatchers: `web_search.ts`, `fetch.ts`. Each imports every leaf module's registration, builds a `PROVIDERS` array, and exposes a `Unified<Category>Provider` class that filters by `key()?.trim()` at construction. See `unified/AGENTS.md`.
 
 ## Registry pattern
 
@@ -57,14 +56,12 @@ const PROVIDERS = [
 
 ## Gotchas / History
 
-- **`gemini_grounded` is NOT in `unified/ai_search.ts PROVIDERS`** — answer_orchestrator imports it directly. This was a deliberate choice: it composes a `web_search_fanout` with a Gemini call, which doesn't fit the simple `SearchProvider.search(params)` shape.
-- **`llm_search` exports a `registration` array** (not an object) and is spread into `PROVIDERS` via `...llm_reg`. The four sub-providers (chatgpt, claude, gemini, grok) share `LLM_SEARCH_BASE_URL` + `LLM_SEARCH_API_KEY` but have separate `model` configs and `key()` checks.
 - **`fetch/github` is the largest leaf folder** (11 files): URL parser → resource-type dispatcher → 17 resource handlers + GraphQL fast-path for repo overview. Domain-breaker provider, exempt from the orchestrator's 200-char failure check. See `fetch/github/AGENTS.md`.
 - **`search/kimi` is registered but currently unused** in production (no key set) per the ROI analysis in `docs/kimi-search-roi-analysis.md`. The folder is preserved for re-enablement if the upstream improves. `fetch/kimi` (different code path) is still active.
 
 ## Related
 
-- `../server/tools.ts` — registers the three `Unified*Provider` instances against the MCP server
-- `../server/web_search_fanout.ts`, `../server/answer_orchestrator.ts`, `../server/fetch_orchestrator.ts` — orchestrators that dispatch through `Unified*`
+- `../server/tools.ts` — registers the two `Unified*Provider` instances against the MCP server
+- `../server/web_search_fanout.ts`, `../server/fetch_orchestrator.ts` — orchestrators that dispatch through `Unified*`
 - `../config/env.ts` — provider config defaults + key wiring
 - `../types/env.ts` — env binding types

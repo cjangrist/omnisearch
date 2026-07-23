@@ -5,18 +5,10 @@ Runtime configuration. Populated per-Worker-isolate from Cloudflare Worker env b
 ## Files
 
 - **`env.ts`** — Single source of truth for runtime config.
-  - Exports `config` — a frozen-shape literal with four keys: `search`, `ai_response`, `fetch`, `snippet_grounding`. Each provider has `api_key` (or `username`/`password`/`account_id`) + `base_url` + `timeout` (and provider-specific extras like `model`, `zone`).
+  - Exports `config` — a frozen-shape literal with three keys: `search`, `fetch`, `snippet_grounding`. Each provider has `api_key` (or `username`/`password`/`account_id`) + `base_url` + `timeout` (and provider-specific extras like `model`, `zone`).
   - Exports `OPENWEBUI_API_KEY`, `OMNISEARCH_API_KEY`, `kv_cache` — top-level singletons set by `initialize_config(env)`.
-  - `initialize_config(env)` populates `config.*.api_key` from env bindings, sets the KV cache reference, calls `set_trace_r2_bucket(env.TRACE_BUCKET)`, and resets conditional fields (LLM bridge URLs, BrightData zone) so removing a binding takes effect on the next isolate boot.
-  - `validate_config()` walks the config tree, logs counts of available vs. missing providers (including `snippet_grounding.groq`). Called once per init.
-
-## LLM bridge wiring detail
-
-The OpenAI-compatible LLM bridge (chatgpt / claude / gemini / grok) requires BOTH `LLM_SEARCH_BASE_URL` AND `LLM_SEARCH_API_KEY`. Without a key, requests fail auth every time, so the wiring deliberately gates on both. Each LLM has an optional model override env var (`LLM_SEARCH_CHATGPT_MODEL`, etc.) — when unset, defaults are `codex/gpt-5.4`, `claude/haiku`, `gemini/search-fast`, `grok`.
-
-## Gemini-grounded wiring detail
-
-`config.ai_response.gemini_grounded.api_key = env.GEMINI_GROUNDED_API_KEY`. Optional `GEMINI_GROUNDED_MODEL` override; default `gemini-3.1-flash-lite-preview`. This provider is NOT registered in `unified/ai_search.ts PROVIDERS` — it's invoked directly from `answer_orchestrator.ts`. Setting the key alone is enough; no other registration step.
+  - `initialize_config(env)` populates `config.*.api_key` from env bindings, sets the KV cache reference, calls `set_trace_r2_bucket(env.TRACE_BUCKET)`, and resets conditional fields (BrightData zone) so removing a binding takes effect on the next isolate boot.
+  - `validate_config()` walks the config tree, logs counts of available vs. missing providers (including `snippet_grounding.llm`). Called once per init.
 
 ## Snippet grounding (Groq) wiring detail
 
@@ -33,7 +25,7 @@ The OpenAI-compatible LLM bridge (chatgpt / claude / gemini / grok) requires BOT
 - `fetch_min_content_chars` — `50` (skip Groq when the page body is below this).
 - `groq_min_snippet_chars` — `1` (treat empty Groq output as `groq_empty` outcome).
 
-Unlike the Gemini-grounded block (under `ai_response`), this block lives at the top level of `config` because it isn't a peer of the AI answer providers — it's a separate pipeline plugged into `web_search_fanout`. The wiring in `initialize_config(env)` is a single line: `config.snippet_grounding.groq.api_key = env.GROQ_API_KEY`. No registration in any unified dispatcher; the orchestrator imports `config.snippet_grounding.groq` directly.
+This block lives at the top level of `config` because it isn't a peer of the search/fetch providers — it's a separate pipeline plugged into `web_search_fanout`. The wiring in `initialize_config(env)` is a single line: `config.snippet_grounding.llm.api_key = env.CEREBRAS_API_KEY`. No registration in any unified dispatcher; the orchestrator imports `config.snippet_grounding.llm` directly.
 
 ## Conventions / Invariants
 

@@ -1,7 +1,7 @@
 // Cloudflare Workers entry point — stateful McpAgent (Durable Object) mode.
-// Each client session gets its own DO instance; GET /mcp holds a live SSE stream
-// that receives progress notifications every 5s during long-running answer fanouts,
-// preventing Claude web's 45-second timeout from killing the connection.
+// Each client session gets its own DO instance. The /mcp response stream is wrapped
+// with an injected SSE keepalive (every 5s) so long-running tool calls don't get
+// torn down by Cloudflare's edge proxy or Claude web's 45-second timeout.
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { McpAgent } from 'agents/mcp';
@@ -422,7 +422,7 @@ async function handle_request(request: Request, env: Env, ctx: ExecutionContext,
 			logger.response(request.method, url.pathname, 200, duration, { request_id });
 			// Try to init so we can report provider availability
 			try { await ensure_rest_initialized(env); } catch { /* best effort */ }
-			const total = active_providers.search.size + active_providers.ai_response.size + active_providers.fetch.size;
+			const total = active_providers.search.size + active_providers.fetch.size;
 			return add_cors_headers(new Response(
 				JSON.stringify({
 					status: total > 0 ? 'ok' : 'degraded',

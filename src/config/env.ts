@@ -76,63 +76,6 @@ export const config = {
 			timeout: 30000,
 		},
 	},
-	ai_response: {
-		perplexity: {
-			api_key: undefined as string | undefined,
-			base_url: 'https://api.perplexity.ai',
-			timeout: 265000,
-		},
-		kagi_fastgpt: {
-			api_key: undefined as string | undefined,
-			base_url: 'https://kagi.com/api/v0/fastgpt',
-			timeout: 265000,
-		},
-		exa_answer: {
-			api_key: undefined as string | undefined,
-			base_url: 'https://api.exa.ai',
-			timeout: 265000,
-		},
-		brave_answer: {
-			api_key: undefined as string | undefined,
-			base_url: 'https://api.search.brave.com/res/v1',
-			timeout: 265000,
-		},
-		tavily_answer: {
-			api_key: undefined as string | undefined,
-			base_url: 'https://api.tavily.com',
-			timeout: 265000,
-		},
-		chatgpt: {
-			api_key: '' as string,
-			base_url: '',
-			model: 'codex/gpt-5.4',
-			timeout: 265000,
-		},
-		claude: {
-			api_key: '' as string,
-			base_url: '',
-			model: 'claude/haiku',
-			timeout: 265000,
-		},
-		gemini: {
-			api_key: '' as string,
-			base_url: '',
-			model: 'gemini/search-fast',
-			timeout: 265000,
-		},
-		grok: {
-			api_key: '' as string,
-			base_url: '',
-			model: 'grok',
-			timeout: 265000,
-		},
-		gemini_grounded: {
-			api_key: undefined as string | undefined,
-			base_url: 'https://generativelanguage.googleapis.com/v1beta',
-			model: 'gemini-3.1-flash-lite-preview',
-			timeout: 265000,
-		},
-	},
 	fetch: {
 		tavily: {
 			api_key: undefined as string | undefined,
@@ -347,54 +290,9 @@ export const initialize_config = (env: Env) => {
 	config.search.kimi.api_key = env.KIMI_API_KEY;
 	config.search.parallel.api_key = env.PARALLEL_API_KEY;
 
-	// AI response providers
-	config.ai_response.perplexity.api_key = env.PERPLEXITY_API_KEY;
-	config.ai_response.kagi_fastgpt.api_key = env.KAGI_API_KEY;
-	config.ai_response.exa_answer.api_key = env.EXA_API_KEY;
-	config.ai_response.brave_answer.api_key = env.BRAVE_ANSWER_API_KEY;
-	config.ai_response.tavily_answer.api_key = env.TAVILY_API_KEY;
 	// Reset conditional fields to defaults before reapplying — prevents stale values
 	// from surviving when env vars are removed between deploys.
-	config.ai_response.chatgpt.base_url = '';
-	config.ai_response.chatgpt.api_key = '';
-	config.ai_response.claude.base_url = '';
-	config.ai_response.claude.api_key = '';
-	config.ai_response.gemini.base_url = '';
-	config.ai_response.gemini.api_key = '';
-	config.ai_response.grok.base_url = '';
-	config.ai_response.grok.api_key = '';
 	config.fetch.brightdata.zone = 'unblocker';
-
-	// LLM search providers (ChatGPT/Claude/Gemini via OpenAI-compatible endpoint)
-	// Require BOTH base_url AND api_key — without a key, requests fail auth every time.
-	if (env.LLM_SEARCH_BASE_URL && env.LLM_SEARCH_API_KEY) {
-		config.ai_response.chatgpt.base_url = env.LLM_SEARCH_BASE_URL;
-		config.ai_response.claude.base_url = env.LLM_SEARCH_BASE_URL;
-		config.ai_response.gemini.base_url = env.LLM_SEARCH_BASE_URL;
-		config.ai_response.grok.base_url = env.LLM_SEARCH_BASE_URL;
-		config.ai_response.chatgpt.api_key = env.LLM_SEARCH_API_KEY;
-		config.ai_response.claude.api_key = env.LLM_SEARCH_API_KEY;
-		config.ai_response.gemini.api_key = env.LLM_SEARCH_API_KEY;
-		config.ai_response.grok.api_key = env.LLM_SEARCH_API_KEY;
-	}
-	if (env.LLM_SEARCH_CHATGPT_MODEL) {
-		config.ai_response.chatgpt.model = env.LLM_SEARCH_CHATGPT_MODEL;
-	}
-	if (env.LLM_SEARCH_CLAUDE_MODEL) {
-		config.ai_response.claude.model = env.LLM_SEARCH_CLAUDE_MODEL;
-	}
-	if (env.LLM_SEARCH_GEMINI_MODEL) {
-		config.ai_response.gemini.model = env.LLM_SEARCH_GEMINI_MODEL;
-	}
-	if (env.LLM_SEARCH_GROK_MODEL) {
-		config.ai_response.grok.model = env.LLM_SEARCH_GROK_MODEL;
-	}
-
-	// Gemini Grounded (native Gemini API with URL context)
-	config.ai_response.gemini_grounded.api_key = env.GEMINI_GROUNDED_API_KEY;
-	if (env.GEMINI_GROUNDED_MODEL) {
-		config.ai_response.gemini_grounded.model = env.GEMINI_GROUNDED_MODEL;
-	}
 
 	// Snippet grounding (gpt-oss-120b via OpenAI-compatible endpoint). Cerebras as of
 	// 2026-06-20; ~3x faster than the prior provider, same model.
@@ -445,14 +343,6 @@ export const initialize_config = (env: Env) => {
 export const validate_config = () => {
 	const all_keys: Array<[string, string | undefined]> = [
 		...Object.entries(config.search).map(([name, c]) => [`search.${name}`, c.api_key] as [string, string | undefined]),
-		...Object.entries(config.ai_response)
-			.filter(([name]) => !['chatgpt', 'claude', 'gemini', 'grok', 'gemini_grounded'].includes(name))
-			.map(([name, c]) => [`ai.${name}`, (c as { api_key?: string }).api_key] as [string, string | undefined]),
-		['ai.chatgpt', config.ai_response.chatgpt.base_url || undefined],
-		['ai.claude', config.ai_response.claude.base_url || undefined],
-		['ai.gemini', config.ai_response.gemini.base_url || undefined],
-		['ai.grok', config.ai_response.grok.base_url || undefined],
-		['ai.gemini_grounded', config.ai_response.gemini_grounded.api_key || undefined],
 		...Object.entries(config.fetch).map(([name, c]) => {
 			const cfg = c as { api_key?: string; username?: string; account_id?: string };
 			return [`fetch.${name}`, cfg.api_key ?? cfg.username ?? cfg.account_id] as [string, string | undefined];

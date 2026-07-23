@@ -8,7 +8,7 @@ Tavily Extract URL fetcher. First step in the waterfall (tier 1, solo).
 - **Vendor**: Tavily
 - **Endpoint**: `POST https://api.tavily.com/extract`
 - **Auth**: `Authorization: Bearer <TAVILY_API_KEY>`
-- **Env var**: `TAVILY_API_KEY` (shared with `../../search/tavily/` and `../../ai_response/tavily_answer/`)
+- **Env var**: `TAVILY_API_KEY` (shared with `../../search/tavily/`)
 - **Returns**: `FetchResult` with markdown content. Title is extracted via `extract_markdown_title` if the response includes a header.
 
 ## Conventions / Invariants

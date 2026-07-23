@@ -260,7 +260,7 @@ export const run_web_search_fanout = async (
 	};
 
 	return run_with_trace(trace, async () => {
-		// Return cached result if available (deduplicates gemini-grounded web search inside answer fanout).
+		// Return cached result if available (deduplicates repeated identical queries).
 		// Defense-in-depth: also require cached.query === query so a SHA-256-collision-defying
 		// future bug couldn't silently serve a different query's results.
 		const cache_read_enabled = !want_grounding || GROUNDED_RESULT_CACHE_ENABLED;
@@ -409,9 +409,9 @@ export const run_web_search_fanout = async (
 		});
 
 		// Only cache COMPLETE fanouts (every active provider settled successfully).
-		// Otherwise a partial — including timeout-limited internal calls from
-		// gemini-grounded — would poison the shared cache key with a one-provider
-		// result that subsequent unconstrained /search calls would receive for 36h.
+		// Otherwise a partial — including any timeout-limited provider — would
+		// poison the shared cache key with a one-provider result that subsequent
+		// unconstrained /search calls would receive for 36h.
 		//
 		// "Complete" now includes the grounding stage when want_grounding is true:
 		// an all-fallback grounding (every URL hit llm_error / pipeline_timeout /

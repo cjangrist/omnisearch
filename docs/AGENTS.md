@@ -5,7 +5,7 @@ Postmortems, ROI analyses, and multi-reviewer synthesis docs that live with the 
 ## Files
 
 - **`kimi-search-roi-analysis.md`** — ROI breakdown for the Kimi search provider. Concludes that Kimi search is the slowest, least reliable, and most expensive provider with minimal unique-URL contribution; that's why `KIMI_API_KEY` is currently unset in production. The provider code is preserved (registry pattern) so it activates if the key is ever set. Kimi *fetch* is a separate path and remains active.
-- **`mcp-empty-payload-anomaly.md`** — Postmortem for an open intermittent bug: under 3+ concurrent long-running `answer` calls, ~20% of MCP responses come back as empty JSON-RPC envelopes. Workaround: serial calls. Not fixed at time of writing.
+- **`mcp-empty-payload-anomaly.md`** — Historical postmortem (2026-05). Investigated an intermittent bug where 3+ concurrent long-running `answer`-tool calls returned empty JSON-RPC envelopes (~20%). **The `answer` tool has since been removed entirely**, so this bug is moot; the doc is retained as the historical investigation record for the SSE keepalive / DO-transport behavior it documents.
 - **`mcp-empty-payload-anomaly-v02.md`** — Follow-up investigation; refines the reproducer.
 - **`skip_providers_review_synthesis.md`** — 9-reviewer hydra-heads synthesis of the fetch waterfall's `skip_providers` parameter. Canonical example of how reviews are run on this codebase.
 
