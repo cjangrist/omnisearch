@@ -133,7 +133,7 @@ export async function handle_rest_search(
 		}));
 
 	const provider_names = result.providers_succeeded.map((p) => p.provider);
-	const failed_count = result.providers_failed?.length ?? 0;
+	const failed_count = result.providers_failed.length;
 
 	logger.info('Search completed', {
 		op: 'search_complete',
@@ -150,7 +150,7 @@ export async function handle_rest_search(
 	if (failed_count > 0) {
 		logger.warn('Some providers failed during search', {
 			op: 'search_complete',
-			failed_providers: result.providers_failed?.map((p) => p.provider),
+			failed_providers: result.providers_failed.map((p) => p.provider),
 			failed_count,
 		});
 	}
@@ -160,7 +160,7 @@ export async function handle_rest_search(
 		const duration = Date.now() - start_time;
 		logger.response('POST', '/search', 502, duration, { failed_count });
 		return Response.json(
-			{ error: 'All search providers failed', failed_providers: result.providers_failed?.map((p) => p.provider) },
+			{ error: 'All search providers failed', failed_providers: result.providers_failed.map((p) => p.provider) },
 			{ status: 502 },
 		);
 	}

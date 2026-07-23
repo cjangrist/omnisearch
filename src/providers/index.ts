@@ -8,7 +8,6 @@ import { UnifiedWebSearchProvider, has_any_search_provider, get_active_search_pr
 import {
 	active_providers,
 	register_web_search_provider,
-	get_web_search_provider,
 } from '../server/tools.js';
 import { OMNIFETCH_ENDPOINT } from '../config/env.js';
 import { omnifetch_available } from '../server/omnifetch_client.js';
@@ -36,7 +35,7 @@ export const initialize_providers = () => {
 	const new_search = new Set<string>();
 	const new_fetch = new Set<string>();
 
-	if (has_any_search_provider() && !get_web_search_provider()) {
+	if (has_any_search_provider()) {
 		register_web_search_provider(new UnifiedWebSearchProvider());
 		for (const p of get_active_search_providers()) {
 			new_search.add(p.name);

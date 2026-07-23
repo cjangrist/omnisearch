@@ -83,7 +83,7 @@ export const emit_request_metric = (m: RequestMetric): void => {
 // ── Dataset B: omni_search — one row per web_search fanout ─────────────────────
 // Index = coarse grounded/raw mode (low volume → stays at 100% sampling).
 // Per-provider detail + grounding internals ride the doubles[] budget.
-export interface SearchMetric {
+interface SearchMetric {
 	mode: string;            // grounded | raw
 	top_provider_win?: string;
 	outcome_summary?: string;

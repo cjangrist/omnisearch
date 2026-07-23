@@ -130,7 +130,6 @@ export const truncate_web_results = (
 const apply_quality_filters = (results: RankedWebResult[]): RankedWebResult[] =>
 	results.filter((r) => {
 		if (r.score < MIN_RRF_SCORE) return false;
-		if (!r.url) return false;
 		if (r.source_providers.length >= 2) return true;
 		return r.snippets.reduce((a, s) => a + s.length, 0) >= MIN_SNIPPET_CHARS_SINGLE_PROVIDER;
 	});

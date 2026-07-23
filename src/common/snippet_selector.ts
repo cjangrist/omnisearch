@@ -35,13 +35,12 @@ const build_bigrams = (words: string[]): Set<string> => {
 };
 
 const jaccard = (a: Set<string>, b: Set<string>): number => {
-	if (a.size === 0 && b.size === 0) return 1;
 	let intersection = 0;
 	for (const item of a) {
 		if (b.has(item)) intersection++;
 	}
 	const union = a.size + b.size - intersection;
-	return union === 0 ? 1 : intersection / union;
+	return intersection / union;
 };
 
 // --- Scoring ---
@@ -174,9 +173,6 @@ const select_best_snippet = (
 	snippets: string[],
 	query: string,
 ): string => {
-	if (snippets.length === 0) return '';
-	if (snippets.length === 1) return snippets[0];
-
 	const query_terms = word_tokenize(query);
 
 	// Normalize all candidates
@@ -197,7 +193,7 @@ const select_best_snippet = (
 	const runner_up = scored[1];
 
 	// If runner-up is very low quality, just return primary
-	if (!runner_up || runner_up.score < primary.score * 0.3) {
+	if (runner_up.score < primary.score * 0.3) {
 		return primary.original;
 	}
 

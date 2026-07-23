@@ -63,11 +63,9 @@ const SSE_KEEPALIVE_INTERVAL_MS = 5_000;
 const SSE_PING = new TextEncoder().encode('event: ping\ndata: keepalive\n\n');
 
 const inject_sse_keepalive = (original: Response): Response => {
-	if (!original.body) return original;
-
 	const { readable, writable } = new TransformStream();
 	const writer = writable.getWriter();
-	const reader = original.body.getReader();
+	const reader = original.body!.getReader();
 	let closed = false;
 
 	// Buffer as a list of chunks — avoids O(n^2) Uint8Array concatenation on every read.

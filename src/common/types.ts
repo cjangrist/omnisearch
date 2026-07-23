@@ -21,7 +21,6 @@ export interface BaseSearchParams {
 export interface SearchProvider {
 	search(params: BaseSearchParams): Promise<SearchResult[]>;
 	name: string;
-	description: string;
 }
 
 // Error types
@@ -29,7 +28,6 @@ export enum ErrorType {
 	API_ERROR = 'API_ERROR',
 	RATE_LIMIT = 'RATE_LIMIT',
 	INVALID_INPUT = 'INVALID_INPUT',
-	NOT_FOUND = 'NOT_FOUND',
 	PROVIDER_ERROR = 'PROVIDER_ERROR',
 }
 
@@ -38,7 +36,6 @@ export class ProviderError extends Error {
 		public type: ErrorType,
 		message: string,
 		public provider: string,
-		public details?: unknown,
 	) {
 		super(message);
 		this.name = 'ProviderError';

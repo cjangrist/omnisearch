@@ -37,19 +37,18 @@ const PROVIDERS = [
 
 export type WebSearchProvider = (typeof PROVIDERS)[number]['name'];
 
-export const get_active_search_providers = (): Array<{ name: string; key: () => string | undefined }> =>
-	PROVIDERS.filter((p) => p.key()?.trim()).map((p) => ({ name: p.name, key: p.key }));
+export const get_active_search_providers = (): Array<{ name: string }> =>
+	PROVIDERS.filter((p) => p.key()?.trim()).map((p) => ({ name: p.name }));
 
 export const has_any_search_provider = (): boolean =>
 	PROVIDERS.some((p) => p.key()?.trim());
 
-export interface UnifiedWebSearchParams extends BaseSearchParams {
+interface UnifiedWebSearchParams extends BaseSearchParams {
 	provider: WebSearchProvider;
 }
 
 export class UnifiedWebSearchProvider implements SearchProvider {
 	name = 'web_search';
-	description = `Search the web. Providers: ${PROVIDERS.map((p) => p.name).join(', ')}.`;
 
 	private providers: Map<string, SearchProvider>;
 

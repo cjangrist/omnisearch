@@ -4,7 +4,6 @@
 interface SearchOperator {
 	type: string;
 	value: string;
-	original_text: string;
 }
 
 interface ParsedQuery {
@@ -12,7 +11,7 @@ interface ParsedQuery {
 	operators: SearchOperator[];
 }
 
-export interface SearchParams {
+interface SearchParams {
 	query: string;
 	include_domains?: string[];
 	exclude_domains?: string[];
@@ -53,8 +52,8 @@ export const parse_search_operators = (query: string): ParsedQuery => {
 	let modified_query = query;
 
 	for (const [type, pattern] of Object.entries(OPERATOR_PATTERNS)) {
-		modified_query = modified_query.replace(pattern, (match, value) => {
-			operators.push({ type, value, original_text: match });
+		modified_query = modified_query.replace(pattern, (_match, value) => {
+			operators.push({ type, value });
 			return '';
 		});
 	}

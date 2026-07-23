@@ -34,7 +34,7 @@ export async function handle_rest_fetch(
 		return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
 	}
 
-	if (!url || typeof url !== 'string' || url.trim().length === 0) {
+	if (!url || url.trim().length === 0) {
 		return Response.json({ error: 'url is required' }, { status: 400 });
 	}
 	if (url.length > 2000) {
@@ -80,7 +80,6 @@ export async function handle_rest_fetch(
 	} catch (err) {
 		const error_message = err instanceof Error ? err.message : String(err);
 		const status = err instanceof ProviderError && err.type === ErrorType.RATE_LIMIT ? 429
-			: err instanceof ProviderError && err.type === ErrorType.NOT_FOUND ? 404
 			: err instanceof ProviderError && err.type === ErrorType.INVALID_INPUT ? 400
 			: 502;
 		logger.error('Fetch failed', {
