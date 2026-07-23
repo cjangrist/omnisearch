@@ -9,8 +9,8 @@ Implementation root. Everything that ships at runtime is here.
 | `worker.ts` | Cloudflare Worker fetch entry; `OmnisearchMCP` Durable Object class; SSE keepalive injection; CORS; routing for `/health`, `/search`, `/fetch`, `/researcher`, `/mcp`. |
 | `common/` | Shared infrastructure: types, HTTP, logging, R2 tracing, RRF ranking, snippet selection, query operators, utilities. See `common/AGENTS.md`. |
 | `config/` | Runtime config (per-Worker-isolate). Populated from CF env bindings via `initialize_config(env)`. See `config/AGENTS.md`. |
-| `providers/` | Provider adapters and unified dispatchers. Three categories: `search/`, `ai_response/`, `fetch/`, plus `unified/` dispatchers and `index.ts` initialization. See `providers/AGENTS.md`. |
-| `server/` | Tool/REST orchestration: parallel fanouts (search, answer), waterfall (fetch), MCP tool registration, REST endpoints. See `server/AGENTS.md`. |
+| `providers/` | Provider adapters and unified dispatchers. One provider category: `search/`, plus the `unified/` dispatcher and `index.ts` initialization. (URL fetching is delegated to omnifetch — no `fetch/` providers.) See `providers/AGENTS.md`. |
+| `server/` | Tool/REST orchestration: parallel fanout (search), omnifetch client (fetch), MCP tool registration, REST endpoints. See `server/AGENTS.md`. |
 | `types/` | Type definitions: CF env bindings + a minimal AsyncLocalStorage stub (workerd provides the runtime, but we don't ship full `@types/node`). See `types/AGENTS.md`. |
 
 ## Where do I look for X?
@@ -25,13 +25,13 @@ Implementation root. Everything that ships at runtime is here.
 
 **REST endpoint handlers** → `server/rest_search.ts`, `server/rest_fetch.ts`, `server/rest_researcher.ts`. All three call `authenticate_rest_request` first, then delegate to the corresponding orchestrator. The researcher endpoint is unique in accepting auth via `?api_key=...` query param.
 
-**MCP tool registration** → `server/tools.ts`. Three tools: `web_search`, `answer`, `fetch`. Each has Zod-typed `inputSchema` + `outputSchema`, an annotation block, and a closure that calls into the matching orchestrator. Tools wrap their callback in `with_ctx_scope(get_ctx, fn)` so trace flush_background calls inside the tool attach to the DO's `waitUntil`.
+**MCP tool registration** → `server/tools.ts`. Two tools: `web_search`, `fetch`. Each has Zod-typed `inputSchema` + `outputSchema`, an annotation block, and a closure that calls into the matching orchestrator. Tools wrap their callback in `with_ctx_scope(get_ctx, fn)` so trace flush_background calls inside the tool attach to the DO's `waitUntil`.
 
-**Orchestrators** → `server/web_search_fanout.ts`, `server/answer_orchestrator.ts`, `server/fetch_orchestrator.ts`. See each file's top-of-file comment for the strategy.
+**Orchestrators** → `server/web_search_fanout.ts` (search fanout + RRF + cache + grounded snippets) and `server/omnifetch_client.ts` (single REST call to the external omnifetch service for URL fetching). See each file's top-of-file comment for the strategy.
 
-**Grounded-snippet stage** → `server/grounded_snippets.ts` (orchestration / state machine) + `server/grounded_prompts.ts` (prompt + junk + sentinel detectors). Runs after RRF inside `web_search_fanout` when `GROQ_API_KEY` is set. Uses Groq (`openai/gpt-oss-120b`) to regenerate top-N snippets from actual page content. See `server/AGENTS.md` for the full breakdown.
+**Grounded-snippet stage** → `server/grounded_snippets.ts` (orchestration / state machine) + `server/grounded_prompts.ts` (prompt + junk + sentinel detectors). Runs after RRF inside `web_search_fanout` when `CEREBRAS_API_KEY` is set. Fetches each top-N URL via `fetch_url` (omnifetch) and uses Cerebras (`gpt-oss-120b`) to regenerate snippets from actual page content. See `server/AGENTS.md` for the full breakdown.
 
-**Provider implementations** → `providers/<category>/<name>/index.ts`. Each exports a class implementing `SearchProvider` or `FetchProvider`, and a `registration` object whose `key()` returns the configured API key (or undefined when unset). The unified dispatcher filters PROVIDERS by `key()?.trim()` to build the active set.
+**Provider implementations** → `providers/search/<name>/index.ts`. Each exports a class implementing `SearchProvider`, and a `registration` object whose `key()` returns the configured API key (or undefined when unset). The unified dispatcher filters PROVIDERS by `key()?.trim()` to build the active set. (Fetch providers no longer exist here — fetching is delegated to omnifetch.)
 
 **Common utilities** → `common/`. `http.ts` for HTTP requests, `utils.ts` for `make_signal`, `hash_key`, `authenticate_rest_request`, `retry_with_backoff`. `logger.ts` for structured logging. `r2_trace.ts` for tracing.
 
@@ -40,7 +40,7 @@ Implementation root. Everything that ships at runtime is here.
 - **AsyncLocalStorage everywhere for per-request state.** Module-scope per-request state is forbidden. Use `run_with_request_id`, `run_with_execution_context`, `run_with_trace`.
 - **Always go through `http_json` / `http_text`** instead of bare `fetch`. The wrappers handle: 5MB response-size guard, status-code → `ProviderError` mapping, body parsing, R2 trace recording, sanitized URL logging.
 - **Throw `ProviderError`** (`common/types.ts`) — orchestrators catch it and convert to per-provider failure entries. Use `handle_provider_error(error, this.name, "context")` from `common/utils.ts` to handle conversion uniformly.
-- **`retry_with_backoff` is opt-in.** Search and answer fanouts deliberately do NOT retry — multi-provider fanout IS the redundancy strategy. Retrying doubles worst-case latency for rare gains.
+- **`retry_with_backoff` is opt-in.** The search fanout deliberately does NOT retry — multi-provider fanout IS the redundancy strategy. Retrying doubles worst-case latency for rare gains.
 - **Imports use `.js` suffix** even for `.ts` source — ESM convention.
 - **Functions over classes** for stateless work; classes only for the registry / tool registry / provider classes.
 - **`nodejs_compat` flag in `wrangler.toml` is required.** Without it, `node:async_hooks` is unavailable and AsyncLocalStorage silently no-ops; per-request scoping breaks.
@@ -56,5 +56,5 @@ Implementation root. Everything that ships at runtime is here.
 ## Related
 
 - Top-level navigation: `../AGENTS.md`
-- Per-tool documentation: README's "Three Tools" section
+- Per-tool documentation: README's "Two Tools" section
 - Concurrency model deep-dive: README's "Concurrency model" section

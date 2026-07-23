@@ -8,7 +8,7 @@ Exa neural / semantic search. Embedding-based ranking that often surfaces result
 - **Vendor**: Exa
 - **Endpoint**: `POST https://api.exa.ai/search`
 - **Auth**: `x-api-key: <EXA_API_KEY>`
-- **Env var**: `EXA_API_KEY` (shared with `../../ai_response/exa_answer/`)
+- **Env var**: `EXA_API_KEY`
 - **Returns**: `{ title, url, snippet, source_provider: "exa" }[]` — snippet pulled from `text` content (capped at 1500 chars).
 - **Defaults**: `type=auto`, `livecrawl=fallback`, 20 results, `contents.text=true`.
 
@@ -21,4 +21,3 @@ Exa neural / semantic search. Embedding-based ranking that often surfaces result
 ## Related
 
 - Registered as `exa` in `../../unified/web_search.ts`.
-- Sister module: `../../ai_response/exa_answer/`.

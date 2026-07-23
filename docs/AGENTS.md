@@ -1,13 +1,10 @@
 # AGENTS.md — docs/
 
-Postmortems, ROI analyses, and multi-reviewer synthesis docs that live with the repo. NOT user-facing — these are operator references.
+Reserved for postmortems, ROI analyses, and multi-reviewer synthesis docs. NOT user-facing — these are operator references.
 
 ## Files
 
-- **`kimi-search-roi-analysis.md`** — ROI breakdown for the Kimi search provider. Concludes that Kimi search is the slowest, least reliable, and most expensive provider with minimal unique-URL contribution; that's why `KIMI_API_KEY` is currently unset in production. The provider code is preserved (registry pattern) so it activates if the key is ever set. Kimi *fetch* is a separate path and remains active.
-- **`mcp-empty-payload-anomaly.md`** — Postmortem for an open intermittent bug: under 3+ concurrent long-running `answer` calls, ~20% of MCP responses come back as empty JSON-RPC envelopes. Workaround: serial calls. Not fixed at time of writing.
-- **`mcp-empty-payload-anomaly-v02.md`** — Follow-up investigation; refines the reproducer.
-- **`skip_providers_review_synthesis.md`** — 9-reviewer hydra-heads synthesis of the fetch waterfall's `skip_providers` parameter. Canonical example of how reviews are run on this codebase.
+_(none currently)_ — the historical postmortems (`mcp-empty-payload-anomaly.md`, `mcp-empty-payload-anomaly-v02.md`, `kimi-search-roi-analysis.md`, `skip_providers_review_synthesis.md`) were removed when their subjects were deleted: the `answer` tool, the internal fetch waterfall / `skip_providers` (URL fetching is now delegated to the external [omnifetch](https://github.com/cjangrist/omnifetch) service), and the kimi-search ROI question. `docs/` currently holds only this `AGENTS.md`.
 
 ## Conventions
 
@@ -20,4 +17,3 @@ Postmortems, ROI analyses, and multi-reviewer synthesis docs that live with the 
 
 - `../AGENTS.md` — repo root
 - `../README.md` — user-facing docs
-- `docs/skip_providers_review_synthesis.md` is referenced from `src/server/AGENTS.md` and the README's "Smoke tests" section

@@ -8,7 +8,7 @@ Kagi search adapter. High-signal curated index — fewer results, generally high
 - **Vendor**: Kagi
 - **Endpoint**: `GET https://kagi.com/api/v0/search?q=...`
 - **Auth**: `Authorization: Bot <KAGI_API_KEY>` (note: `Bot`, not `Bearer`)
-- **Env var**: `KAGI_API_KEY` (shared with `../../ai_response/kagi_fastgpt/`)
+- **Env var**: `KAGI_API_KEY`
 - **Returns**: `{ title, url, snippet, source_provider: "kagi" }[]`
 - **Default limit**: 20 results.
 
@@ -21,4 +21,3 @@ Kagi search adapter. High-signal curated index — fewer results, generally high
 ## Related
 
 - Registered as `kagi` in `../../unified/web_search.ts`.
-- Sister module: `../../ai_response/kagi_fastgpt/`.

@@ -7,7 +7,7 @@
 import { ProviderError } from '../common/types.js';
 import { loggers } from '../common/logger.js';
 import { authenticate_rest_request, sanitize_for_log } from '../common/utils.js';
-import { get_web_search_provider, get_fetch_provider } from './tools.js';
+import { get_web_search_provider } from './tools.js';
 import { run_web_search_fanout } from './web_search_fanout.js';
 import { OPENWEBUI_API_KEY, OMNISEARCH_API_KEY } from '../config/env.js';
 
@@ -112,7 +112,6 @@ export async function handle_rest_search(
 		result = await run_web_search_fanout(web_provider, query, {
 			skip_quality_filter: raw,
 			grounded_snippets,
-			fetch_provider: get_fetch_provider(),
 		});
 	} catch (err) {
 		const error_message = err instanceof Error ? err.message : String(err);

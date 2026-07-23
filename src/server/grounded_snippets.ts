@@ -1,6 +1,6 @@
 // Grounded snippets: after the web_search RRF ranker picks the top-N results,
-// fetch each URL through the existing fetch waterfall (concurrency-capped to
-// avoid hammering providers) and use Cerebras (gpt-oss-120b) to write a
+// fetch each URL via the external omnifetch service (concurrency-capped to
+// avoid hammering omnifetch) and use Cerebras (gpt-oss-120b) to write a
 // snippet summarizing what the page says (in the context of the query).
 //
 // Conceptual model (intentionally narrow):
@@ -11,22 +11,19 @@
 //     addresses the query — even an off-topic page should get a summary
 //     describing what it IS about. The user (or upstream LLM) decides
 //     relevance from the snippet.
-//   - Therefore: the only legitimate reason to RETRY a fetch is a fetch-side
-//     pipeline error (paywall surfaced as the body, login wall, cookie wall,
-//     JavaScript-required shell, etc.) — anything where the bytes returned
-//     are not the page's real content. We detect those PRE-LLM via pattern
-//     matching and retry with skip_providers={winner_of_attempt_1}. We do
-//     NOT retry based on LLM's output.
+//   - Therefore: the only legitimate reason a URL doesn't get a grounded
+//     snippet is a fetch-side pipeline error (paywall surfaced as the body,
+//     login wall, cookie wall, JavaScript-required shell, etc.) or an LLM
+//     failure. We detect junk content PRE-LLM via pattern matching. There is
+//     no longer a skip_providers retry — a single fetch is performed per URL,
+//     and junk content falls back to the original aggregated snippet.
 //
 // Robustness model:
-//   1. Bounded worker pool (default concurrency=3). Providers see at most N
-//      simultaneous calls — the waterfall has room to do its within-URL
-//      failover (Tavily fails → Firecrawl tries → ...).
+//   1. Bounded worker pool (default concurrency=3). omnifetch sees at most N
+//      simultaneous calls.
 //   2. Per-URL hard deadline (default 15s) — no single bad URL stalls a worker.
 //   3. Junk-content detection (paywall / login-wall / etc.) BEFORE LLM.
-//      Triggers a single retry with skip_providers. No retry when fetch_race
-//      throws (waterfall already exhausted) and no retry on LLM's verdict.
-//   4. Failure classification (8 outcomes) — every path produces exactly one.
+//   4. Failure classification (7 outcomes) — every path produces exactly one.
 //   5. Structured logging at every phase boundary with timestamps, durations,
 //      provider attribution. Plus a single grounding_aggregate line for
 //      monitoring.
@@ -37,8 +34,7 @@ import { loggers } from '../common/logger.js';
 import { config } from '../config/env.js';
 import { get_active_trace } from '../common/r2_trace.js';
 import type { RankedWebResult, SnippetSource } from '../common/rrf_ranking.js';
-import type { UnifiedFetchProvider } from '../providers/unified/fetch.js';
-import { run_fetch_race, type FetchRaceResult } from './fetch_orchestrator.js';
+import { fetch_url, type OmnifetchResult } from './omnifetch_client.js';
 import {
 	GROUNDED_SNIPPET_MAX_CHARS,
 	GROUNDED_SYSTEM_PROMPT,
@@ -53,10 +49,9 @@ const logger = loggers.search();
 
 export type GroundingOutcome =
 	| 'grounded'
-	| 'grounded_via_retry'
 	| 'fallback:fetch_exhausted'
 	| 'fallback:fetch_too_short'
-	| 'fallback:fetch_junk_after_retry'
+	| 'fallback:fetch_junk'
 	| 'fallback:llm_sentinel'
 	| 'fallback:llm_error'
 	| 'fallback:llm_empty'
@@ -64,11 +59,8 @@ export type GroundingOutcome =
 
 interface PipelineOutcome {
 	outcome: GroundingOutcome;
-	attempts: 0 | 1 | 2;
 	duration_ms: number;
 	fetch_provider_used?: string;
-	fetch_providers_attempted?: string[];
-	fetch_providers_failed_count?: number;
 	content_length?: number;
 	snippet_length?: number;
 	error?: string;
@@ -133,9 +125,6 @@ const run_with_concurrency = async <T, R>(
 // resolve with on_timeout()'s value. on_timeout() is responsible for any
 // cancellation it wants — typically firing an AbortController whose signal
 // was threaded into the inner promise's work (see fetch_then_ground).
-// Without that abort, the inner promise's pending awaits keep running and
-// can outlive the worker that resumes pulling from the queue, scaling with
-// the number of timing-out items rather than the concurrency cap.
 const with_deadline = async <T>(
 	promise: Promise<T>,
 	deadline_ms: number,
@@ -172,12 +161,6 @@ interface LlmExtractResult {
 // If the snippet ends with an unbalanced ``` fence (because the SDK truncation
 // or natural model stop landed mid-block), append a closing fence so downstream
 // markdown renderers don't bleed the rest of the response into a code block.
-//
-// Only counts LINE-START triple-backticks (with up to 3 spaces of indent per
-// CommonMark) — inline literal ``` inside prose or inside a fenced code block
-// (e.g., a markdown tutorial showing how to write fences) is correctly ignored.
-// R6 cleanup: prior version counted all ``` occurrences and produced spurious
-// closing fences on tutorial-style snippets that taught fence syntax.
 const FENCE_LINE_START_RE = /^[ ]{0,3}```/gm;
 const close_unbalanced_fence = (snippet: string): string => {
 	const fence_count = (snippet.match(FENCE_LINE_START_RE) ?? []).length;
@@ -210,13 +193,6 @@ const extract_grounded_snippet = async (
 					{ role: 'system', content: GROUNDED_SYSTEM_PROMPT },
 					{ role: 'user', content: build_grounded_user_message(query, title, content, cfg.max_content_chars) },
 				],
-				// Low temp for factual fidelity (verbatim code / citations). top_p + frequency_penalty
-				// guard against degenerate-sampling repetition loops ("hhgghghvgegggg"-style mash)
-				// observed on smaller open-weight models under heavy long-context prompts.
-				// max_tokens intentionally omitted — the prompt's length guidance handles
-				// bounding output naturally; SDK-side GROUNDED_SNIPPET_MAX_CHARS truncation
-				// is a hard safety net only. The mid-fence trail-off seen in V2.2 (vCluster
-				// sample) is addressed by close_unbalanced_fence post-process below.
 				temperature: 0.2,
 				top_p: 0.9,
 				frequency_penalty: 0.3,
@@ -266,17 +242,17 @@ const log_phase = (
 
 interface PipelineRunResult {
 	outcome: GroundingOutcome;
-	attempts: 0 | 1 | 2;
-	winning_fetch?: FetchRaceResult;
+	winning_fetch?: OmnifetchResult;
 	winning_snippet?: string;
 	last_error?: string;
 }
 
-// Run a single fetch + LLM pair. Used by both attempt 1 and the retry path.
-// Returns either a winning snippet or a structured failure indicator.
+// Run a single fetch + LLM pair. Returns either a winning snippet or a
+// structured failure indicator. No retry — a junk/sentinel result falls back
+// to the original aggregated snippet via the outcome classification.
 interface FetchAndGroundResult {
 	kind: 'success' | 'fetch_throw' | 'fetch_too_short' | 'fetch_junk' | 'llm_error' | 'llm_empty' | 'llm_sentinel';
-	fetch_result?: FetchRaceResult;
+	fetch_result?: OmnifetchResult;
 	snippet?: string;
 	error?: string;
 	junk_reason?: string;
@@ -288,66 +264,39 @@ const fetch_and_ground = async (
 	pipeline_t0: number,
 	query: string,
 	url: string,
-	fetch_provider: UnifiedFetchProvider,
 	signal: AbortSignal | undefined,
-	attempt: 1 | 2,
-	skip_providers?: string[],
 ): Promise<FetchAndGroundResult> => {
 	const cfg = config.snippet_grounding.llm;
-	const fetch_phase = `fetch_attempt_${attempt}`;
-	const llm_phase = `llm_attempt_${attempt}`;
-	const trace_provider_key = attempt === 1
-		? `llm_grounding_${ctx.pipeline_index}`
-		: `llm_grounding_${ctx.pipeline_index}_retry`;
 
-	// Fetch
+	// Fetch (single call to the external omnifetch service)
 	const fetch_t0 = Date.now();
-	let fetch_result: FetchRaceResult;
+	let fetch_result: OmnifetchResult;
 	try {
-		fetch_result = await run_fetch_race(
-			fetch_provider,
-			url,
-			{
-				is_grounding_internal: true,
-				...(skip_providers && skip_providers.length > 0 ? { skip_providers } : {}),
-			},
-		);
-		log_phase(ctx, fetch_phase, pipeline_t0, fetch_t0, {
-			attempt,
-			skip_providers: skip_providers ?? [],
-			provider_used: fetch_result.provider_used,
-			providers_attempted: fetch_result.providers_attempted,
-			providers_failed_count: fetch_result.providers_failed.length,
-			content_length: fetch_result.result.content.length,
+		fetch_result = await fetch_url(url, signal);
+		log_phase(ctx, 'fetch', pipeline_t0, fetch_t0, {
+			source_provider: fetch_result.source_provider,
+			content_length: fetch_result.content.length,
 		});
 	} catch (err) {
 		const msg = error_message(err);
-		log_phase(ctx, fetch_phase, pipeline_t0, fetch_t0, {
-			attempt,
-			skip_providers: skip_providers ?? [],
-			error: msg,
-		});
+		log_phase(ctx, 'fetch', pipeline_t0, fetch_t0, { error: msg });
 		return { kind: 'fetch_throw', error: msg };
 	}
 
 	// Length guard
-	if (fetch_result.result.content.length < cfg.fetch_min_content_chars) {
-		log_phase(ctx, `${fetch_phase}_filter`, pipeline_t0, fetch_t0, {
-			attempt,
-			content_length: fetch_result.result.content.length,
+	if (fetch_result.content.length < cfg.fetch_min_content_chars) {
+		log_phase(ctx, 'fetch_filter', pipeline_t0, fetch_t0, {
+			content_length: fetch_result.content.length,
 			reason: 'too_short',
 		});
 		return { kind: 'fetch_too_short', fetch_result };
 	}
 
 	// Junk content guard (paywall/login-wall/etc.) — pre-LLM detection.
-	// On attempt 1, this triggers a retry with skip_providers={winner}. On
-	// attempt 2, it surfaces as fallback:fetch_junk_after_retry.
-	const junk_reason = detect_grounded_junk(fetch_result.result.content);
+	const junk_reason = detect_grounded_junk(fetch_result.content);
 	if (junk_reason) {
-		log_phase(ctx, `${fetch_phase}_filter`, pipeline_t0, fetch_t0, {
-			attempt,
-			content_length: fetch_result.result.content.length,
+		log_phase(ctx, 'fetch_filter', pipeline_t0, fetch_t0, {
+			content_length: fetch_result.content.length,
 			reason: 'junk',
 			junk_reason,
 		});
@@ -358,14 +307,13 @@ const fetch_and_ground = async (
 	const llm_t0 = Date.now();
 	try {
 		const llm_out = await extract_grounded_snippet(
-			trace_provider_key,
+			`llm_grounding_${ctx.pipeline_index}`,
 			query,
-			fetch_result.result.title,
-			fetch_result.result.content,
+			fetch_result.title,
+			fetch_result.content,
 			signal,
 		);
-		log_phase(ctx, llm_phase, pipeline_t0, llm_t0, {
-			attempt,
+		log_phase(ctx, 'llm', pipeline_t0, llm_t0, {
 			snippet_length: llm_out.snippet.length,
 			finish_reason: llm_out.finish_reason,
 			prompt_tokens: llm_out.prompt_tokens,
@@ -377,23 +325,16 @@ const fetch_and_ground = async (
 		// Sentinel detection: model signals "this page genuinely has no usable
 		// content for the query" via one of the bracketed strings in the system
 		// prompt. We map back to the original aggregated snippet (fallback) so
-		// users don't see "[no usable content]" in the response. Treated like
-		// fetch_junk for retry purposes — a different fetcher might rescue.
+		// users don't see "[no usable content]" in the response.
 		const sentinel = detect_grounded_sentinel(llm_out.snippet);
 		if (sentinel) {
-			log_phase(ctx, `${llm_phase}_sentinel`, pipeline_t0, llm_t0, {
-				attempt,
-				sentinel,
-			});
+			log_phase(ctx, 'llm_sentinel', pipeline_t0, llm_t0, { sentinel });
 			return { kind: 'llm_sentinel', fetch_result, snippet: llm_out.snippet, sentinel };
 		}
 		return { kind: 'success', fetch_result, snippet: llm_out.snippet };
 	} catch (err) {
 		const msg = error_message(err);
-		log_phase(ctx, llm_phase, pipeline_t0, llm_t0, {
-			attempt,
-			error: msg,
-		});
+		log_phase(ctx, 'llm', pipeline_t0, llm_t0, { error: msg });
 		return { kind: 'llm_error', fetch_result, error: msg };
 	}
 };
@@ -403,74 +344,38 @@ const run_pipeline = async (
 	pipeline_t0: number,
 	query: string,
 	url: string,
-	fetch_provider: UnifiedFetchProvider,
 	signal: AbortSignal | undefined,
 ): Promise<PipelineRunResult> => {
-	const cfg = config.snippet_grounding.llm;
+	const result = await fetch_and_ground(ctx, pipeline_t0, query, url, signal);
 
-	// Attempt 1: fetch + ground. Retry only on fetch_throw (waterfall pointlessly
-	// already exhausted, no retry there) is NOT triggered — instead we retry on
-	// fetch_junk (pipeline error: paywall, login wall, etc.).
-	const a1 = await fetch_and_ground(ctx, pipeline_t0, query, url, fetch_provider, signal, 1);
-
-	if (a1.kind === 'success' && a1.snippet && a1.fetch_result) {
-		return { outcome: 'grounded', attempts: 1, winning_fetch: a1.fetch_result, winning_snippet: a1.snippet };
+	if (result.kind === 'success' && result.snippet && result.fetch_result) {
+		return { outcome: 'grounded', winning_fetch: result.fetch_result, winning_snippet: result.snippet };
 	}
-	if (a1.kind === 'fetch_throw') {
-		return { outcome: 'fallback:fetch_exhausted', attempts: 1, last_error: a1.error };
+	if (result.kind === 'fetch_throw') {
+		return { outcome: 'fallback:fetch_exhausted', last_error: result.error };
 	}
-	if (a1.kind === 'fetch_too_short') {
-		return { outcome: 'fallback:fetch_too_short', attempts: 1, winning_fetch: a1.fetch_result };
+	if (result.kind === 'fetch_too_short') {
+		return { outcome: 'fallback:fetch_too_short', winning_fetch: result.fetch_result };
 	}
-	if (a1.kind === 'llm_error') {
-		return { outcome: 'fallback:llm_error', attempts: 1, winning_fetch: a1.fetch_result, last_error: a1.error };
+	if (result.kind === 'llm_error') {
+		return { outcome: 'fallback:llm_error', winning_fetch: result.fetch_result, last_error: result.error };
 	}
-	if (a1.kind === 'llm_empty') {
-		return { outcome: 'fallback:llm_empty', attempts: 1, winning_fetch: a1.fetch_result };
+	if (result.kind === 'llm_empty') {
+		return { outcome: 'fallback:llm_empty', winning_fetch: result.fetch_result };
 	}
-
-	// a1.kind === 'fetch_junk' OR 'llm_sentinel' — both signal "the page returned
-	// content but it isn't real page content for this query" (paywall fragment,
-	// login shell, 404 body, nav-only homepage, etc.). Both warrant retry with a
-	// different fetcher; that path is unified.
-	if (!cfg.retry_on_llm_empty) {
-		// Tunable kept for back-compat — false disables the retry path entirely.
-		const a1_outcome: GroundingOutcome = a1.kind === 'llm_sentinel'
-			? 'fallback:llm_sentinel'
-			: 'fallback:fetch_junk_after_retry';
-		return { outcome: a1_outcome, attempts: 1, winning_fetch: a1.fetch_result };
+	if (result.kind === 'fetch_junk') {
+		return { outcome: 'fallback:fetch_junk', winning_fetch: result.fetch_result };
 	}
-	const skip = a1.fetch_result?.provider_used ? [a1.fetch_result.provider_used] : [];
-	const a2 = await fetch_and_ground(ctx, pipeline_t0, query, url, fetch_provider, signal, 2, skip);
-
-	if (a2.kind === 'success' && a2.snippet && a2.fetch_result) {
-		return { outcome: 'grounded_via_retry', attempts: 2, winning_fetch: a2.fetch_result, winning_snippet: a2.snippet };
-	}
-	if (a2.kind === 'fetch_throw') {
-		return { outcome: 'fallback:fetch_exhausted', attempts: 2, last_error: a2.error };
-	}
-	if (a2.kind === 'fetch_too_short' || a2.kind === 'fetch_junk') {
-		return { outcome: 'fallback:fetch_junk_after_retry', attempts: 2, winning_fetch: a2.fetch_result };
-	}
-	if (a2.kind === 'llm_sentinel') {
-		// Both fetchers' content prompted the model to declare no usable content.
-		// Likely the page genuinely has nothing for this query (404, nav, SERP).
-		return { outcome: 'fallback:llm_sentinel', attempts: 2, winning_fetch: a2.fetch_result };
-	}
-	if (a2.kind === 'llm_error') {
-		return { outcome: 'fallback:llm_error', attempts: 2, winning_fetch: a2.fetch_result, last_error: a2.error };
-	}
-	return { outcome: 'fallback:llm_empty', attempts: 2, winning_fetch: a2.fetch_result };
+	// result.kind === 'llm_sentinel'
+	return { outcome: 'fallback:llm_sentinel', winning_fetch: result.fetch_result };
 };
 
 const fetch_then_ground = async (
 	query: string,
 	result: RankedWebResult,
-	fetch_provider: UnifiedFetchProvider,
 	signal: AbortSignal | undefined,
 	index: number,
 ): Promise<PipelineResult> => {
-	const cfg = config.snippet_grounding.llm;
 	const pipeline_t0 = Date.now();
 	const ctx: PipelineCtx = {
 		pipeline_index: index,
@@ -483,16 +388,10 @@ const fetch_then_ground = async (
 
 	log_phase(ctx, 'pipeline_start', pipeline_t0, pipeline_t0);
 
-	// Per-URL deadline aborts the inner pipeline (LLM half) when fired. R1 H2
-	// (round-2 confirmed 9/9 consensus): the prior implementation resolved the
-	// outer promise on timeout but left the inner fetch + LLM calls running,
-	// silently violating the concurrency=3 cap. Now: deadline triggers
-	// AbortController.abort(); the abort signal is threaded into run_pipeline →
-	// fetch_and_ground → extract_grounded_snippet's make_signal(timeout, signal),
-	// so the outstanding LLM HTTP request fails fast with AbortError.
-	// Caveat: run_fetch_race doesn't accept a signal yet (separate orchestrator
-	// change), so the fetch waterfall side still runs to its own timeouts —
-	// that's a future commit.
+	// Per-URL deadline aborts the inner pipeline (LLM half) when fired. The
+	// deadline triggers AbortController.abort(); the abort signal is threaded
+	// into fetch_url → extract_grounded_snippet's make_signal(timeout, signal),
+	// so the outstanding omnifetch + LLM HTTP requests fail fast with AbortError.
 	const deadline_controller = new AbortController();
 	const pipeline_signal = signal
 		? (typeof AbortSignal.any === 'function'
@@ -500,49 +399,43 @@ const fetch_then_ground = async (
 			: deadline_controller.signal)
 		: deadline_controller.signal;
 	const run = await with_deadline<PipelineRunResult>(
-		run_pipeline(ctx, pipeline_t0, query, result.url, fetch_provider, pipeline_signal),
-		cfg.per_url_deadline_ms,
+		run_pipeline(ctx, pipeline_t0, query, result.url, pipeline_signal),
+		config.snippet_grounding.llm.per_url_deadline_ms,
 		() => {
 			deadline_controller.abort();
-			return { outcome: 'fallback:pipeline_timeout', attempts: 0 };
+			return { outcome: 'fallback:pipeline_timeout' };
 		},
 	);
 
 	const total_ms = Date.now() - pipeline_t0;
 	const outcome_meta: PipelineOutcome = {
 		outcome: run.outcome,
-		attempts: run.attempts,
 		duration_ms: total_ms,
-		fetch_provider_used: run.winning_fetch?.provider_used,
-		fetch_providers_attempted: run.winning_fetch?.providers_attempted,
-		fetch_providers_failed_count: run.winning_fetch?.providers_failed.length,
-		content_length: run.winning_fetch?.result.content.length,
+		fetch_provider_used: run.winning_fetch?.source_provider,
+		content_length: run.winning_fetch?.content.length,
 		snippet_length: run.winning_snippet?.length,
 		error: run.last_error,
 	};
 
 	log_phase(ctx, 'pipeline_complete', pipeline_t0, pipeline_t0, {
 		outcome: run.outcome,
-		attempts: run.attempts,
 		fetch_provider_used: outcome_meta.fetch_provider_used,
 		snippet_length: outcome_meta.snippet_length,
 		total_pipeline_ms: total_ms,
 	});
 
-	const grounded_outcome = run.outcome === 'grounded' || run.outcome === 'grounded_via_retry';
-	if (grounded_outcome && run.winning_snippet && run.winning_fetch) {
+	if (run.outcome === 'grounded' && run.winning_snippet && run.winning_fetch) {
 		trace?.record_provider_complete(trace_provider_key, {
 			url: result.url,
 			host: ctx.host,
 			outcome: run.outcome,
-			attempts: run.attempts,
-			provider_used: run.winning_fetch.provider_used,
+			provider_used: run.winning_fetch.source_provider,
 			snippet_length: run.winning_snippet.length,
 		}, total_ms);
 		return {
 			result: {
 				...result,
-				title: run.winning_fetch.result.title || result.title,
+				title: run.winning_fetch.title || result.title,
 				snippets: [run.winning_snippet],
 				snippet_source: 'grounded' as SnippetSource,
 			},
@@ -589,7 +482,6 @@ const TRANSIENT_GROUNDING_OUTCOMES: ReadonlySet<GroundingOutcome> = new Set<Grou
 export const ground_top_results = async (
 	query: string,
 	results: RankedWebResult[],
-	fetch_provider: UnifiedFetchProvider,
 	signal?: AbortSignal,
 ): Promise<GroundingOutput> => {
 	if (results.length === 0) return { results, stats: { transient_fail_count: 0, grounded_count: 0, total_urls: 0, makespan_ms: 0, p50_ms: 0, p95_ms: 0, max_ms: 0, timeout_count: 0, retried_count: 0 } };
@@ -605,13 +497,12 @@ export const ground_top_results = async (
 		count: results.length,
 		concurrency: cfg.concurrency,
 		per_url_deadline_ms: cfg.per_url_deadline_ms,
-		retry_on_llm_empty: cfg.retry_on_llm_empty,
 	});
 
 	const settled = await run_with_concurrency(
 		results,
 		cfg.concurrency,
-		(r, i) => fetch_then_ground(query, r, fetch_provider, signal, i),
+		(r, i) => fetch_then_ground(query, r, signal, i),
 	);
 
 	// Reduce settled results into final list + aggregate metrics. Rejected
@@ -620,9 +511,7 @@ export const ground_top_results = async (
 	const final_results: RankedWebResult[] = [];
 	const outcome_counts: Record<string, number> = {};
 	const provider_wins: Record<string, number> = {};
-	const provider_failures: Record<string, number> = {};
 	const durations: number[] = [];
-	let retried_count = 0;
 	let timeout_count = 0;
 	let grounded_count = 0;
 
@@ -634,22 +523,11 @@ export const ground_top_results = async (
 			const o = s.value.outcome;
 			outcome_counts[o.outcome] = (outcome_counts[o.outcome] || 0) + 1;
 			durations.push(o.duration_ms);
-			if (o.attempts === 2) retried_count++;
 			if (o.outcome === 'fallback:pipeline_timeout') timeout_count++;
-			if (o.outcome === 'grounded' || o.outcome === 'grounded_via_retry') {
+			if (o.outcome === 'grounded') {
 				grounded_count++;
 				if (o.fetch_provider_used) {
 					provider_wins[o.fetch_provider_used] = (provider_wins[o.fetch_provider_used] || 0) + 1;
-				}
-			}
-			// Tally per-provider failures across the attempted providers minus
-			// the winner. Gives visibility into which providers commonly fail
-			// during grounding fanout.
-			if (o.fetch_providers_attempted) {
-				for (const p of o.fetch_providers_attempted) {
-					if (p !== o.fetch_provider_used) {
-						provider_failures[p] = (provider_failures[p] || 0) + 1;
-					}
 				}
 			}
 		} else {
@@ -691,8 +569,6 @@ export const ground_top_results = async (
 			max: sorted_durations[sorted_durations.length - 1] ?? 0,
 		},
 		provider_wins,
-		provider_failures,
-		retried_count,
 		timeout_count,
 		concurrency: cfg.concurrency,
 		per_url_deadline_ms: cfg.per_url_deadline_ms,
@@ -712,7 +588,7 @@ export const ground_top_results = async (
 			p95_ms: percentile(sorted_durations, 0.95),
 			max_ms: sorted_durations[sorted_durations.length - 1] ?? 0,
 			timeout_count,
-			retried_count,
+			retried_count: 0,
 		},
 	};
 };
