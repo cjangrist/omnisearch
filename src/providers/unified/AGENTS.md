@@ -4,7 +4,7 @@ One dispatcher — `web_search` — that abstracts the registry of leaf search p
 
 ## Files
 
-- **`web_search.ts`** — `UnifiedWebSearchProvider`. `PROVIDERS` array imports every leaf in `../search/` (11 entries: `tavily`, `brave`, `kagi`, `exa`, `firecrawl`, `perplexity`, `serpapi`, `linkup`, `you`, `kimi`, `parallel`). Constructor filters by `key()?.trim()` and instantiates only the active ones. `search({ provider, ...params })` dispatches by name, throwing `INVALID_INPUT` on unknown.
+- **`web_search.ts`** — `UnifiedWebSearchProvider`. `PROVIDERS` array imports every leaf in `../search/` (10 entries: `tavily`, `brave`, `kagi`, `exa`, `firecrawl`, `perplexity`, `serpapi`, `linkup`, `you`, `parallel`). Constructor filters by `key()?.trim()` and instantiates only the active ones. `search({ provider, ...params })` dispatches by name, throwing `INVALID_INPUT` on unknown.
 
 ## How a leaf provider gets registered
 

@@ -8,8 +8,7 @@ TypeScript type definitions specific to the Worker runtime. Two files only.
   - `worker.ts` `ExportedHandler<Env>` and `class OmnisearchMCP extends McpAgent<Env>`.
   - `config/env.ts` `initialize_config(env: Env)`.
   Members:
-  - **Search keys**: `TAVILY_API_KEY`, `BRAVE_API_KEY`, `KAGI_API_KEY`, `EXA_API_KEY`, `SERPAPI_API_KEY`, `LINKUP_API_KEY`, `PARALLEL_API_KEY`, `PERPLEXITY_API_KEY`, `FIRECRAWL_API_KEY`, `YOU_API_KEY`, `KIMI_API_KEY`.
-  - **Scrapfly** (kimi search proxy): `SCRAPFLY_API_KEY` — required together with `KIMI_API_KEY` if Kimi search is enabled.
+  - **Search keys**: `TAVILY_API_KEY`, `BRAVE_API_KEY`, `KAGI_API_KEY`, `EXA_API_KEY`, `SERPAPI_API_KEY`, `LINKUP_API_KEY`, `PARALLEL_API_KEY`, `PERPLEXITY_API_KEY`, `FIRECRAWL_API_KEY`, `YOU_API_KEY`.
   - **Snippet-grounding key**: `CEREBRAS_API_KEY` — when set, `web_search` / `POST /search` regenerate top-N snippets via Cerebras from actual page content (see `src/server/grounded_snippets.ts`). Default ON when present; opt-out via per-call `grounded_snippets:false`.
   - **omnifetch endpoint**: `OMNIFETCH_ENDPOINT` — base URL of the external omnifetch service (owns all URL fetching). Defaults to `http://127.0.0.1:8000`.
   - **REST auth**: `OPENWEBUI_API_KEY`, `OMNISEARCH_API_KEY`.
@@ -23,7 +22,6 @@ TypeScript type definitions specific to the Worker runtime. Two files only.
 
 ## Gotchas / History
 
-- **`KIMI_API_KEY` only enables Kimi if `SCRAPFLY_API_KEY` is also set** — the Kimi search adapter routes through Scrapfly residential proxy because `api.kimi.com` blocks Cloudflare-Workers ASN egress. The dependency is enforced at the registration / config layer, not in the env type.
 - **Optional fields**: every key field is typed `string | undefined`. `validate_api_key()` (from `common/utils.ts`) throws `ProviderError(API_ERROR)` if missing — providers don't need to do their own null-check.
 
 ## Related

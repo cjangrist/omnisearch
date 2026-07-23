@@ -4,7 +4,7 @@ Reserved for postmortems, ROI analyses, and multi-reviewer synthesis docs. NOT u
 
 ## Files
 
-_(none currently)_ — the historical postmortems (`mcp-empty-payload-anomaly.md`, `mcp-empty-payload-anomaly-v02.md`, `kimi-search-roi-analysis.md`, `skip_providers_review_synthesis.md`) were removed when their subjects were deleted: the `answer` tool, the internal fetch waterfall / `skip_providers` (URL fetching is now delegated to the external [omnifetch](https://github.com/cjangrist/omnifetch) service), and the kimi-search ROI question. `docs/` currently holds only this `AGENTS.md`.
+_(none currently)_ — the historical postmortems (`mcp-empty-payload-anomaly*.md`, `skip_providers_review_synthesis.md`) were removed when their subjects were deleted: the `answer` tool and the internal fetch waterfall / `skip_providers` (URL fetching is now delegated to the external [omnifetch](https://github.com/cjangrist/omnifetch) service). `docs/` currently holds only this `AGENTS.md`.
 
 ## Conventions
 

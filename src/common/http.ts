@@ -174,13 +174,3 @@ export const http_json = async <T = unknown>(
 	if (body !== undefined) return body as T;
 	throw new ProviderError(ErrorType.API_ERROR, `Invalid JSON response from ${provider}`, provider);
 };
-
-// Returns raw text (for providers that return HTML/markdown/plain text)
-export const http_text = async (
-	provider: string,
-	url: string,
-	options: HttpOptions = {},
-): Promise<string> => {
-	const { raw } = await http_core(provider, url, options);
-	return raw;
-};

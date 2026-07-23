@@ -42,8 +42,7 @@ omnisearch/
 └── src/
     ├── worker.ts                            # CF Worker fetch entry; OmnisearchMCP DO export; SSE keepalive injection
     ├── common/
-    │   ├── html.ts                          # extract_html_title / extract_markdown_title
-    │   ├── http.ts                          # http_json / http_text wrappers (5MB size guard, redaction, R2 trace hook)
+    │   ├── http.ts                          # http_json wrapper (5MB size guard, redaction, R2 trace hook)
     │   ├── logger.ts                        # JSON logger with AsyncLocalStorage<request_id>
     │   ├── r2_trace.ts                      # TraceContext + AsyncLocalStorage<WaitUntilCapable> + R2 hive-partitioned writer
     │   ├── rrf_ranking.ts                   # Reciprocal Rank Fusion + URL dedup + tail rescue + quality filter
@@ -55,7 +54,7 @@ omnisearch/
     │   └── env.ts                           # config object + initialize_config(env) + validate_config()
     ├── providers/
     │   ├── index.ts                         # initialize_providers() — atomic-swap registries
-    │   ├── search/                          # 11 web-search providers — query → ranked SearchResult[]
+    │   ├── search/                          # 10 web-search providers — query → ranked SearchResult[]
     │   └── unified/                         # web_search dispatcher — auto-built from registrations
     ├── server/
     │   ├── omnifetch_client.ts              # single REST client → POST ${OMNIFETCH_ENDPOINT}/web_fetch
@@ -173,7 +172,7 @@ curl "https://your-worker.workers.dev/researcher?query=rust+memory+safety&api_ke
 
 # Health — actual provider count varies by which keys are configured
 curl https://your-worker.workers.dev/health
-# {"status":"ok","name":"omnisearch-mcp","version":"1.0.0","providers":12}
+# {"status":"ok","name":"omnisearch-mcp","version":"1.0.0","providers":11}
 ```
 
 ---
@@ -197,7 +196,6 @@ Set at least one.
 | `FIRECRAWL_API_KEY` | [Firecrawl](https://firecrawl.dev) | |
 | `YOU_API_KEY` | [You.com](https://you.com) | |
 | `PERPLEXITY_API_KEY` | [Perplexity](https://perplexity.ai) | Sonar web search |
-| `KIMI_API_KEY` | [Kimi](https://platform.kimi.com) | Currently disabled by default — routed via Scrapfly residential proxy. Requires `SCRAPFLY_API_KEY` too. |
 | `PARALLEL_API_KEY` | [Parallel](https://parallel.ai) | |
 
 ### URL fetching — `fetch` tool + web_search grounding
@@ -205,7 +203,6 @@ Set at least one.
 | Variable | Purpose |
 |----------|---------|
 | `OMNIFETCH_ENDPOINT` | Base URL of the external [omnifetch](https://github.com/cjangrist/omnifetch) service. omnisearch POSTs `{"url": ...}` to `${OMNIFETCH_ENDPOINT}/web_fetch`. Public endpoint (no auth). Defaults to `http://127.0.0.1:8000` (local docker-compose). |
-| `SCRAPFLY_API_KEY` | Scrapfly residential-proxy egress for the kimi search provider. |
 
 ### Snippet grounding (Cerebras) — `web_search` tool
 

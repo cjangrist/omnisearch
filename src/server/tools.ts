@@ -48,10 +48,6 @@ class ToolRegistry {
 		return this.web_search_provider;
 	}
 
-	reset() {
-		this.web_search_provider = undefined;
-	}
-
 	register_web_search_provider(provider: UnifiedWebSearchProvider) {
 		this.web_search_provider = provider;
 	}
@@ -249,6 +245,5 @@ Just pass the URL and get back clean content. If a URL exists on the public web,
 const registry = new ToolRegistry();
 
 export const get_web_search_provider = () => registry.get_web_search_provider();
-export const reset_registry = () => { registry.reset(); };
 export const register_tools = (server: McpServer, get_ctx?: CtxGetter) => { registry.setup_tool_handlers(server, get_ctx); };
 export const register_web_search_provider = (provider: UnifiedWebSearchProvider) => { registry.register_web_search_provider(provider); };

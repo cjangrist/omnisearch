@@ -8,7 +8,7 @@ Provider adapters for the two tools, plus unified dispatchers and provider-set i
 
 ## Subfolders
 
-- **`search/`** — 11 web-search providers (`tavily`, `brave`, `kagi`, `exa`, `firecrawl`, `perplexity`, `serpapi`, `linkup`, `you`, `kimi`, `parallel`). Each implements `SearchProvider` and exports a `registration` object. See `search/AGENTS.md`.
+- **`search/`** — 10 web-search providers (`tavily`, `brave`, `kagi`, `exa`, `firecrawl`, `perplexity`, `serpapi`, `linkup`, `you`, `parallel`). Each implements `SearchProvider` and exports a `registration` object. See `search/AGENTS.md`.
 - **`unified/`** — One dispatcher: `web_search.ts`. It imports every leaf search module's registration, builds a `PROVIDERS` array, and exposes `UnifiedWebSearchProvider` which filters by `key()?.trim()` at construction. See `unified/AGENTS.md`. (URL fetching is delegated to omnifetch — no `fetch/` providers and no `unified/fetch.ts`.)
 
 ## Registry pattern
@@ -44,17 +44,17 @@ const PROVIDERS = [
 
 ## Conventions / Invariants
 
-- **Each leaf folder is self-contained** — one `index.ts` (with rare multi-file exceptions: `github`, `kimi` search). No cross-leaf imports.
+- **Each leaf folder is self-contained** — one `index.ts`. No cross-leaf imports.
 - **Throw `ProviderError`** from inside the `search` method. Use `handle_provider_error(error, this.name, "context")` from `../common/utils.ts`.
 - **Validate the API key at the start** of every method via `validate_api_key(config.search.<name>.api_key, this.name)`. The validator throws if missing.
-- **Always go through `http_json` / `http_text`** — never bare `fetch`. The wrappers handle response-size guard, status-code mapping, and trace recording.
+- **Always go through `http_json`** — never bare `fetch`. The wrapper handles response-size guard, status-code mapping, and trace recording.
 - **Use `make_signal(timeout, params.signal)`** for search providers so external aborts (deadlines from the orchestrator) compose with the per-provider timeout.
 - **Parse search operators** via `apply_search_operators` / `build_query_with_operators` from `../common/search_operators.ts` if your provider supports them (Brave, Kagi, Tavily do).
 - **Don't retry inside the provider.** Multi-provider fanout is the redundancy strategy — retries would multiply worst-case latency. The orchestrator decides retry policy.
 
 ## Gotchas / History
 
-- **`search/kimi` is registered but currently unused** in production (no key set) — the slowest, least reliable, and most expensive search provider with minimal unique-URL contribution. The folder is preserved for re-enablement if the upstream improves. Routed through Scrapfly residential proxy (`config.scrapfly`); requires both `KIMI_API_KEY` and `SCRAPFLY_API_KEY`.
+_(none currently)_
 
 ## Related
 

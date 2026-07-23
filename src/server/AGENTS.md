@@ -25,7 +25,6 @@ Tool and REST orchestration. Two orchestrators (search fanout, omnifetch client)
 
 ## Gotchas / History
 
-- **The `kimi` search provider requires both `KIMI_API_KEY` AND `SCRAPFLY_API_KEY`.** If only one is set, kimi is silently skipped at the active-set filter (correct behavior). Scrapfly config is now top-level (`config.scrapfly`), not `config.fetch.scrapfly`.
 - **`/researcher` returns snippets, not full content** despite an older header comment. If you need full extraction, call `/fetch` separately or the MCP `fetch` tool.
 - **R4F01 (per-DO ctx capture)** is a tools.ts-specific invariant. The registry is module-scoped (shared across DO instances in the same isolate); each tool closure captures its own `get_ctx` so trace flush_background calls scope to the right DO. See README's "Concurrency model" section.
 - **All-failed → 502, not 200** on REST `/search` and `/researcher`. (R3F03)

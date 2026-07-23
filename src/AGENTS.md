@@ -38,7 +38,7 @@ Implementation root. Everything that ships at runtime is here.
 ## Conventions / Invariants
 
 - **AsyncLocalStorage everywhere for per-request state.** Module-scope per-request state is forbidden. Use `run_with_request_id`, `run_with_execution_context`, `run_with_trace`.
-- **Always go through `http_json` / `http_text`** instead of bare `fetch`. The wrappers handle: 5MB response-size guard, status-code → `ProviderError` mapping, body parsing, R2 trace recording, sanitized URL logging.
+- **Always go through `http_json`** instead of bare `fetch`. The wrapper handles: 5MB response-size guard, status-code → `ProviderError` mapping, body parsing, R2 trace recording, sanitized URL logging.
 - **Throw `ProviderError`** (`common/types.ts`) — orchestrators catch it and convert to per-provider failure entries. Use `handle_provider_error(error, this.name, "context")` from `common/utils.ts` to handle conversion uniformly.
 - **`retry_with_backoff` is opt-in.** The search fanout deliberately does NOT retry — multi-provider fanout IS the redundancy strategy. Retrying doubles worst-case latency for rare gains.
 - **Imports use `.js` suffix** even for `.ts` source — ESM convention.

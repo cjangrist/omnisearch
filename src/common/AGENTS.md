@@ -10,9 +10,8 @@ Shared infrastructure used by every other module. Types, HTTP, logging, R2 traci
   - `SearchProvider { search(params), name, description }`
   - `enum ErrorType { API_ERROR, RATE_LIMIT, INVALID_INPUT, NOT_FOUND, PROVIDER_ERROR }`
   - `class ProviderError extends Error { type, message, provider, details? }`
-- **`http.ts`** — Streaming HTTP client. Two entry points:
+- **`http.ts`** — Streaming HTTP client. Entry point:
   - `http_json<T>(provider_name, url, options)` — parses JSON, throws `ProviderError(API_ERROR | RATE_LIMIT)` on non-2xx.
-  - `http_text(provider_name, url, options)` — returns raw text body.
   - 5MB response size guard (`MAX_RESPONSE_BYTES`).
   - Sensitive query params (`api_key`, `key`, `token`, `app_id`, `x-api-key`, `apikey`) redacted in log output via `sanitize_url`.
   - Records full HTTP round-trip into the active `TraceContext` (request headers, request body, response headers, response body, response_size_bytes, duration_ms).
@@ -49,11 +48,10 @@ Shared infrastructure used by every other module. Types, HTTP, logging, R2 traci
   - Near-identical sentences (Jaccard > 0.7) are deduplicated.
 - **`search_operators.ts`** — Parses query syntax (`site:`, `-site:`, `filetype:`, `intitle:`, `inurl:`, `inbody:`, `lang:`, `loc:`, `before:`, `after:`, `+term`, `-term`, `"exact"`) into structured params.
   - Used by Brave, Kagi, Tavily; provider-specific renderers in `apply_search_operators` and `build_query_with_operators`.
-- **`html.ts`** — `extract_html_title(html)` and `extract_markdown_title(markdown)`. Used by search providers that return raw HTML/markdown without a title field.
 
 ## Conventions / Invariants
 
-- **No bare `fetch`.** Always go through `http_json` / `http_text` so 5MB guard, status mapping, and trace recording happen automatically.
+- **No bare `fetch`.** Always go through `http_json` so 5MB guard, status mapping, and trace recording happen automatically.
 - **All per-request state goes through ALS stores**, never module-level mutables.
 - **`hash_key` is async** — always `await`.
 - **`ProviderError` is the only error orchestrators catch**. Other thrown errors propagate to the top-level handler and become 500s.

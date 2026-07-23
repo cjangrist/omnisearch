@@ -72,24 +72,11 @@ export const config = {
 			base_url: 'https://ydc-index.io/v1',
 			timeout: 20000,
 		},
-		kimi: {
-			api_key: undefined as string | undefined,
-			base_url: 'https://api.kimi.com',
-			timeout: 30000,
-		},
 		parallel: {
 			api_key: undefined as string | undefined,
 			base_url: 'https://api.parallel.ai',
 			timeout: 30000,
 		},
-	},
-	// Scrapfly residential-proxy egress — used only by the kimi search provider
-	// (api.kimi.com blocks Cloudflare-Workers ASN, so kimi search is proxied
-	// through Scrapfly). Was config.fetch.scrapfly before the fetch waterfall was
-	// externalized to omnifetch; promoted to top-level since it's now search-only.
-	scrapfly: {
-		api_key: undefined as string | undefined,
-		base_url: 'https://api.scrapfly.io',
 	},
 	snippet_grounding: {
 		llm: {
@@ -127,7 +114,6 @@ export const config = {
 			// aggregated snippet (grounded_count was already ~19/20), so quality barely
 			// moves while makespan drops sharply.
 			per_url_deadline_ms: 7500,
-			retry_on_llm_empty: true,
 			fetch_min_content_chars: 50,
 			llm_min_snippet_chars: 1,
 		},
@@ -155,11 +141,7 @@ export const initialize_config = (env: Env) => {
 	config.search.serpapi.api_key = env.SERPAPI_API_KEY;
 	config.search.linkup.api_key = env.LINKUP_API_KEY;
 	config.search.you.api_key = env.YOU_API_KEY;
-	config.search.kimi.api_key = env.KIMI_API_KEY;
 	config.search.parallel.api_key = env.PARALLEL_API_KEY;
-
-	// Scrapfly proxy for kimi search
-	config.scrapfly.api_key = env.SCRAPFLY_API_KEY;
 
 	// Snippet grounding (gpt-oss-120b via OpenAI-compatible endpoint). Cerebras as of
 	// 2026-06-20; ~3x faster than the prior provider, same model.
@@ -172,7 +154,6 @@ export const initialize_config = (env: Env) => {
 export const validate_config = () => {
 	const all_keys: Array<[string, string | undefined]> = [
 		...Object.entries(config.search).map(([name, c]) => [`search.${name}`, c.api_key] as [string, string | undefined]),
-		['scrapfly', config.scrapfly.api_key || undefined],
 		['omnifetch', OMNIFETCH_ENDPOINT || undefined],
 		['snippet_grounding.llm', config.snippet_grounding.llm.api_key || undefined],
 	];

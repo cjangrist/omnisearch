@@ -12,10 +12,6 @@ export interface Env {
 	PERPLEXITY_API_KEY?: string;
 	FIRECRAWL_API_KEY?: string;
 	YOU_API_KEY?: string;
-	KIMI_API_KEY?: string;
-
-	// Scrapfly residential-proxy egress for the kimi search provider
-	SCRAPFLY_API_KEY?: string;
 
 	// Snippet grounding for web_search (gpt-oss-120b, OpenAI-compatible endpoint).
 	// Active provider: Cerebras as of 2026-06-20 (~3x faster than the prior provider).

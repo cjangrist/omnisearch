@@ -24,8 +24,8 @@ export const GROUNDED_SNIPPET_MAX_CHARS = SNIPPET_MAX_CHARS;
 //      grounded_snippets.ts maps sentinels back to fallback so users see the
 //      original aggregated snippet rather than "[no usable content]".
 // Length tiers narrowed to non-overlapping (100-300 / 300-800 / 800-1800)
-// per kimi/ob1 form. Profanity policy intentionally absent — content policy
-// belongs at a different pipeline stage (claude's architectural argument).
+// per reviewer consensus. Profanity policy intentionally absent — content policy
+// belongs at a different pipeline stage.
 // Multi-language defaults to QUERY language since most consumers are LLMs.
 export const GROUNDED_SYSTEM_PROMPT = `You write self-contained, query-grounded snippets that a downstream LLM agent will treat as its only evidence about this page. Given a search query and the body content of a webpage that ranked for the query, output a snippet dense enough to answer the query from the snippet alone. The consumer is an LLM that will almost never fetch the full page — write as if no follow-up fetch will happen. If the page genuinely answers the query, the consumer must be able to answer the user from your snippet without ever reading the page itself.
 
@@ -175,12 +175,6 @@ export const GROUNDED_JUNK_AMBIGUOUS_PATTERNS: readonly string[] = [
 ];
 
 const JUNK_AMBIGUOUS_MAX_CONTENT_CHARS = 3000;
-
-// Backwards-compat union for any external reader.
-export const GROUNDED_JUNK_CONTENT_PATTERNS: readonly string[] = [
-	...GROUNDED_JUNK_TIGHT_PATTERNS,
-	...GROUNDED_JUNK_AMBIGUOUS_PATTERNS,
-];
 
 export const detect_grounded_junk = (content: string): string | undefined => {
 	if (!content) return 'empty_body';

@@ -21,8 +21,8 @@ You are at the top of `omnisearch` — a Cloudflare-Workers MCP server that aggr
 
 ## Provider count cheatsheet
 
-The active provider count from `/health` is `search.size + fetch.size`, populated by `initialize_providers()`. With every key set, the upper bound is **12**:
-- **11 search providers**: tavily, brave, kagi, exa, firecrawl, perplexity, serpapi, linkup, you, kimi, parallel (kimi requires both `KIMI_API_KEY` and `SCRAPFLY_API_KEY`; parallel uses `PARALLEL_API_KEY`).
+The active provider count from `/health` is `search.size + fetch.size`, populated by `initialize_providers()`. With every key set, the upper bound is **11**:
+- **10 search providers**: tavily, brave, kagi, exa, firecrawl, perplexity, serpapi, linkup, you, parallel (parallel uses `PARALLEL_API_KEY`).
 - **1 fetch entry** — `omnifetch`, added when `OMNIFETCH_ENDPOINT` is configured. omnisearch no longer has fetch providers; the multi-provider waterfall lives in the external [omnifetch](https://github.com/cjangrist/omnifetch) service.
 
 ## Where do I look for X?
@@ -46,7 +46,7 @@ The active provider count from `/health` is `search.size + fetch.size`, populate
 
 **Logging** → `src/common/logger.ts`. `loggers.<component>()` factory + `run_with_request_id(uuid, fn)` scope. Level threshold: `info` by default, `LOG_LEVEL` overridable via `globalThis.__LOG_LEVEL`.
 
-**HTTP requests** → `src/common/http.ts` `http_json` / `http_text`. Always go through these (not bare `fetch`) so the 5MB size guard, status-code → `ProviderError` mapping, and R2 trace recording all happen automatically.
+**HTTP requests** → `src/common/http.ts` `http_json`. Always go through it (not bare `fetch`) so the 5MB size guard, status-code → `ProviderError` mapping, and R2 trace recording all happen automatically.
 
 **Error model** → `src/common/types.ts` `ProviderError(type, message, provider, details?)`. Types: `API_ERROR`, `RATE_LIMIT`, `INVALID_INPUT`, `PROVIDER_ERROR`. Only `PROVIDER_ERROR` is retried by `retry_with_backoff` (transient). Rate limit and bad input never retry.
 
@@ -75,12 +75,11 @@ The active provider count from `/health` is `search.size + fetch.size`, populate
 - **AsyncLocalStorage everywhere**: never module-scope per-request state. Anything that varies per request (request_id, ExecutionContext, TraceContext) lives in an ALS store.
 - **`hash_key` is async** — always `await` it.
 - **Module-level config singleton** (`src/config/env.ts`) populated by `initialize_config(env)` — must be called before any provider access.
-- **Tokens cheap, correctness paramount**: prefer reading the full file over inferring from path names. The codebase has multi-file providers (kimi search: `index.ts` + `headers.ts` + `scrapfly_proxy.ts`) and proxy-routed providers — none of which would be correctly described by their folder name alone.
+- **Tokens cheap, correctness paramount**: prefer reading the full file over inferring from path names. Some providers have non-obvious behavior (provider-specific params, operator translation) that wouldn't be correctly described by their folder name alone.
 
 ## Gotchas / History
 
 - **Fetch is delegated, not duplicated.** omnisearch no longer runs a fetch waterfall — there is no `skip_providers`, no `provider`, no `skip_cache` on the `fetch` tool. All URL fetching goes through `src/server/omnifetch_client.ts` → omnifetch `/web_fetch`. The waterfall, breakers, and multi-provider racing live in the [omnifetch](https://github.com/cjangrist/omnifetch) repo.
-- **Kimi search is registered but currently disabled** (no key configured) — the slowest, least reliable, and most expensive search provider with minimal unique-URL contribution. Do NOT delete the provider — keep it dormant for re-enable if the upstream improves. Routed through Scrapfly residential proxy (`config.scrapfly`); requires both `KIMI_API_KEY` and `SCRAPFLY_API_KEY`.
 - **Brave uses `BRAVE_API_KEY`** for web search.
 - **The DO is stateful.** Each MCP client session gets its own DO instance. R4F01 (per-closure ctx capture) exists because the `tools.ts` module-level registry is shared across DOs in the same isolate; capturing `() => this.ctx` per registration call keeps each tool callback bound to the DO that registered it.
 - **The R2 trace bucket is private and stores unredacted payloads.** Sensitive query params are redacted in *log output* but not in R2 traces — by design, for incident debugging. Do not change without checking with the user.
