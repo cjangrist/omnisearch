@@ -318,7 +318,7 @@ export default {
 		// Ensure the worker isolate has the AE datasets for the per-request metric.
 		// (The DO isolate sets its own copy in _do_init for the search/fetch datasets
 		// it emits during tool execution.) Cheap + idempotent.
-		set_analytics_datasets({ requests: env.AE_REQUESTS, search: env.AE_SEARCH, fetch: env.AE_FETCH });
+		set_analytics_datasets({ requests: env.AE_REQUESTS, search: env.AE_SEARCH });
 
 		// Scope ExecutionContext per-request via AsyncLocalStorage so flush_background
 		// always attaches to the originating request's ctx (no module-level race).

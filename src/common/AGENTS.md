@@ -8,9 +8,7 @@ Shared infrastructure used by every other module. Types, HTTP, logging, R2 traci
   - `SearchResult { title, url, snippet, score?, source_provider, metadata? }`
   - `BaseSearchParams { query, limit?, include_domains?, exclude_domains?, signal? }`
   - `SearchProvider { search(params), name, description }`
-  - `FetchResult { url, title, content, source_provider, metadata? }`
-  - `FetchProvider { fetch_url(url), name, description }`
-  - `enum ErrorType { API_ERROR, RATE_LIMIT, INVALID_INPUT, PROVIDER_ERROR }`
+  - `enum ErrorType { API_ERROR, RATE_LIMIT, INVALID_INPUT, NOT_FOUND, PROVIDER_ERROR }`
   - `class ProviderError extends Error { type, message, provider, details? }`
 - **`http.ts`** — Streaming HTTP client. Two entry points:
   - `http_json<T>(provider_name, url, options)` — parses JSON, throws `ProviderError(API_ERROR | RATE_LIMIT)` on non-2xx.
@@ -44,14 +42,14 @@ Shared infrastructure used by every other module. Types, HTTP, logging, R2 traci
   - URL dedup uses normalized URL (lowercase host, strip fragment, strip trailing slash).
   - Tail rescue: results from underrepresented domains in the tail are rescued if their per-provider intra-rank is < 2.
   - Quality filter: minimum snippet length and minimum content density. Skipped when the caller passes `skip_quality_filter`.
-  - Exports `type SnippetSource = 'aggregated' | 'grounded' | 'fallback'` and an optional `snippet_source` field on `RankedWebResult`. The Groq grounding stage in `server/grounded_snippets.ts` overwrites `snippets[0]` with a query-grounded snippet and tags `snippet_source: 'grounded'`; on failure it tags `'fallback'` and leaves the original aggregated snippet untouched. Untouched ranked results carry no `snippet_source` (treated as `'aggregated'` downstream). Also exports `truncate_web_results(results, top_n)` used by the grounding stage to pick the top-N URLs to ground.
+  - Exports `type SnippetSource = 'aggregated' | 'grounded' | 'fallback'` and an optional `snippet_source` field on `RankedWebResult`. The Cerebras grounding stage in `server/grounded_snippets.ts` overwrites `snippets[0]` with a query-grounded snippet and tags `snippet_source: 'grounded'`; on failure it tags `'fallback'` and leaves the original aggregated snippet untouched. Untouched ranked results carry no `snippet_source` (treated as `'aggregated'` downstream). Also exports `truncate_web_results(results, top_n)` used by the grounding stage to pick the top-N URLs to ground.
 - **`snippet_selector.ts`** — Snippet collapse logic.
   - `collapse_snippets(snippets, query)` — when 2+ providers return the same URL, scores each candidate on bigram density times query-term relevance times log-length.
   - If the runner-up has Jaccard < 0.3 vs. the winner, runs greedy sentence-level set cover within a 500-char budget to produce a merged snippet. Otherwise returns the best single snippet.
   - Near-identical sentences (Jaccard > 0.7) are deduplicated.
 - **`search_operators.ts`** — Parses query syntax (`site:`, `-site:`, `filetype:`, `intitle:`, `inurl:`, `inbody:`, `lang:`, `loc:`, `before:`, `after:`, `+term`, `-term`, `"exact"`) into structured params.
   - Used by Brave, Kagi, Tavily; provider-specific renderers in `apply_search_operators` and `build_query_with_operators`.
-- **`html.ts`** — `extract_html_title(html)` and `extract_markdown_title(markdown)`. Used by fetch providers that return raw HTML/markdown without a title field.
+- **`html.ts`** — `extract_html_title(html)` and `extract_markdown_title(markdown)`. Used by search providers that return raw HTML/markdown without a title field.
 
 ## Conventions / Invariants
 

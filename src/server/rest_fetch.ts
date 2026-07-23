@@ -1,14 +1,12 @@
-// REST fetch endpoint — lightweight alternative to the MCP fetch tool
-// POST /fetch  { url: string, provider?: string }
-// Returns { url, title, content, source_provider, duration_ms }
+// REST fetch endpoint — delegates to the external omnifetch service.
+// POST /fetch  { url: string }
+// Returns { url, title, content, source_provider, duration_ms, metadata }
 // Compatible with Open WebUI and any REST client.
 
 import { ErrorType, ProviderError } from '../common/types.js';
 import { loggers } from '../common/logger.js';
 import { authenticate_rest_request, sanitize_for_log } from '../common/utils.js';
-import { get_fetch_provider } from './tools.js';
-import { run_fetch_race, parse_skip_providers, validate_skip_providers } from './fetch_orchestrator.js';
-import { get_active_fetch_providers, type FetchProviderName } from '../providers/unified/fetch.js';
+import { fetch_url } from './omnifetch_client.js';
 import { OPENWEBUI_API_KEY, OMNISEARCH_API_KEY } from '../config/env.js';
 
 const logger = loggers.rest();
@@ -29,16 +27,9 @@ export async function handle_rest_fetch(
 
 	// Parse request body
 	let url = '';
-	let provider: string | undefined;
-	let skip_cache = false;
-	let skip_providers: string[] = [];
 	try {
-		const body = await request.json() as { url?: unknown; provider?: unknown; skip_cache?: unknown; skip_providers?: unknown };
-		// Validate later — type-narrow only what's safe to narrow now.
+		const body = await request.json() as { url?: unknown };
 		if (typeof body.url === 'string') url = body.url;
-		if (typeof body.provider === 'string') provider = body.provider;
-		skip_cache = body.skip_cache === true;
-		skip_providers = parse_skip_providers(body.skip_providers);
 	} catch {
 		return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
 	}
@@ -58,95 +49,33 @@ export async function handle_rest_fetch(
 		return Response.json({ error: 'Invalid URL format' }, { status: 400 });
 	}
 
-	// Validate provider if specified
-	if (provider) {
-		const valid_names = new Set(get_active_fetch_providers().map((p) => p.name));
-		if (!valid_names.has(provider)) {
-			return Response.json(
-				{ error: `Invalid provider: ${provider}. Valid: ${Array.from(valid_names).join(', ')}` },
-				{ status: 400 },
-			);
-		}
-	}
-
-	// Validate skip_providers — reject typos / unknown names.
-	if (skip_providers.length > 0) {
-		const { unknown } = validate_skip_providers(skip_providers);
-		if (unknown.length > 0) {
-			const valid_names = get_active_fetch_providers().map((p) => p.name);
-			return Response.json(
-				{ error: `Unknown skip_providers names: ${unknown.join(', ')}. Valid: ${valid_names.join(', ')}` },
-				{ status: 400 },
-			);
-		}
-	}
-
-	// Reject provider + skip_providers combined: they're contradictory.
-	// `provider` forces a specific provider (no waterfall); `skip_providers`
-	// only affects the waterfall. Honoring one silently dropped the other —
-	// surface the conflict instead.
-	if (provider && skip_providers.length > 0) {
-		return Response.json(
-			{ error: `Cannot combine 'provider' and 'skip_providers' — 'provider' bypasses the waterfall entirely so skip_providers has no effect. Use one or the other.` },
-			{ status: 400 },
-		);
-	}
-
 	logger.info('Fetch request received', {
 		op: 'fetch_request',
 		url: sanitize_for_log(url),
-		provider: provider ?? 'auto (waterfall)',
 	});
 
-	const fetch_provider = get_fetch_provider();
-	if (!fetch_provider) {
-		logger.error('No fetch providers configured', {
-			op: 'provider_check',
-			status: 503,
-		});
-		return Response.json(
-			{ error: 'No fetch providers configured' },
-			{ status: 503 },
-		);
-	}
-
 	try {
-		const result = await run_fetch_race(fetch_provider, url, {
-			provider: provider as FetchProviderName | undefined,
-			skip_cache,
-			skip_providers,
-		});
+		const result = await fetch_url(url);
 
 		const duration = Date.now() - start_time;
 		logger.info('Fetch completed', {
 			op: 'fetch_complete',
 			url: sanitize_for_log(url),
-			provider_used: result.provider_used,
+			source_provider: result.source_provider,
 			duration_ms: result.total_duration_ms,
-			providers_failed_count: result.providers_failed.length,
 		});
 
 		logger.response('POST', '/fetch', 200, duration, {
-			provider_used: result.provider_used,
+			source_provider: result.source_provider,
 		});
 
 		return Response.json({
-			url: result.result.url,
-			title: result.result.title,
-			content: result.result.content,
-			source_provider: result.provider_used,
+			url: result.url,
+			title: result.title,
+			content: result.content,
+			source_provider: result.source_provider,
 			duration_ms: result.total_duration_ms,
-			providers_attempted: result.providers_attempted,
-			providers_failed: result.providers_failed,
-			skip_providers,
-			alternative_results: result.alternative_results?.map((a) => ({
-				url: a.result.url,
-				title: a.result.title,
-				content: a.result.content,
-				source_provider: a.provider,
-				metadata: a.result.metadata,
-			})),
-			metadata: result.result.metadata,
+			metadata: result.metadata,
 		});
 	} catch (err) {
 		const error_message = err instanceof Error ? err.message : String(err);

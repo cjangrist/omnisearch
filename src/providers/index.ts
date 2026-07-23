@@ -1,14 +1,17 @@
-// Provider initialization — derives availability from unified registries
+// Provider initialization — derives availability from unified registries.
+//
+// Only web_search has a provider registry now. URL fetching is delegated to the
+// external omnifetch service (no internal fetch providers), so `fetch` just
+// tracks whether OMNIFETCH_ENDPOINT is configured.
 
 import { UnifiedWebSearchProvider, has_any_search_provider, get_active_search_providers } from './unified/web_search.js';
-import { UnifiedFetchProvider, has_any_fetch_provider, get_active_fetch_providers } from './unified/fetch.js';
 import {
 	active_providers,
 	register_web_search_provider,
-	register_fetch_provider,
 	get_web_search_provider,
-	get_fetch_provider,
 } from '../server/tools.js';
+import { OMNIFETCH_ENDPOINT } from '../config/env.js';
+import { omnifetch_available } from '../server/omnifetch_client.js';
 import { loggers } from '../common/logger.js';
 
 const logger = loggers.providers();
@@ -51,19 +54,17 @@ export const initialize_providers = () => {
 		});
 	}
 
-	if (has_any_fetch_provider() && !get_fetch_provider()) {
-		register_fetch_provider(new UnifiedFetchProvider());
-		for (const p of get_active_fetch_providers()) {
-			new_fetch.add(p.name);
-		}
-		logger.info('Fetch providers registered', {
+	// Fetch is a single external service — no provider registry. Track availability
+	// so /health and the provider-status resource reflect it.
+	if (omnifetch_available()) {
+		new_fetch.add('omnifetch');
+		logger.info('Fetch service configured', {
 			op: 'init_providers',
 			category: 'fetch',
-			providers: Array.from(new_fetch),
-			count: new_fetch.size,
+			endpoint: OMNIFETCH_ENDPOINT,
 		});
-	} else if (!has_any_fetch_provider()) {
-		logger.warn('No fetch providers available', {
+	} else {
+		logger.warn('OMNIFETCH_ENDPOINT not configured — fetch tool unavailable', {
 			op: 'init_providers',
 			category: 'fetch',
 		});

@@ -1,7 +1,7 @@
 // Cloudflare Workers environment bindings
 
 export interface Env {
-	// Search provider API keys
+	// Web-search provider API keys
 	TAVILY_API_KEY?: string;
 	BRAVE_API_KEY?: string;
 	KAGI_API_KEY?: string;
@@ -9,53 +9,28 @@ export interface Env {
 	SERPAPI_API_KEY?: string;
 	LINKUP_API_KEY?: string;
 	PARALLEL_API_KEY?: string;
-
-	// Perplexity (web search provider)
 	PERPLEXITY_API_KEY?: string;
-
-	// Content processing
 	FIRECRAWL_API_KEY?: string;
 	YOU_API_KEY?: string;
+	KIMI_API_KEY?: string;
+
+	// Scrapfly residential-proxy egress for the kimi search provider
+	SCRAPFLY_API_KEY?: string;
 
 	// Snippet grounding for web_search (gpt-oss-120b, OpenAI-compatible endpoint).
 	// Active provider: Cerebras as of 2026-06-20 (~3x faster than the prior provider).
 	CEREBRAS_API_KEY?: string;
 
-	// Fetch-only provider API keys
-	JINA_API_KEY?: string;
-	BRIGHT_DATA_API_KEY?: string;
-	BRIGHT_DATA_ZONE?: string;
-	DIFFBOT_TOKEN?: string;
-	SOCIAVAULT_API_KEY?: string;
-	SPIDER_CLOUD_API_TOKEN?: string;
-	SCRAPFLY_API_KEY?: string;
-	SCRAPEGRAPHAI_API_KEY?: string;
-	SCRAPE_DO_API_TOKEN?: string;
-	SCRAPELESS_API_KEY?: string;
-	OPENGRAPH_IO_API_KEY?: string;
-	SCRAPINGBEE_API_KEY?: string;
-	SCRAPERAPI_API_KEY?: string;
-	ZYTE_API_KEY?: string;
-	SCRAPINGANT_API_KEY?: string;
-	OXYLABS_WEB_SCRAPER_USERNAME?: string;
-	OXYLABS_WEB_SCRAPER_PASSWORD?: string;
-	OLOSTEP_API_KEY?: string;
-	DECODO_WEB_SCRAPING_API_KEY?: string;
-	SCRAPPEY_API_KEY?: string;
-	LEADMAGIC_API_KEY?: string;
-	CLOUDFLARE_ACCOUNT_ID?: string;
-	CLOUDFLARE_EMAIL?: string;
-	CLOUDFLARE_API_KEY?: string;
-
-	SUPADATA_API_KEY?: string;
-	GITHUB_API_KEY?: string;
-	KIMI_API_KEY?: string;
+	// omnifetch service — owns all URL fetching (externalized multi-provider
+	// waterfall). Public endpoint (no auth). The fetch tool and the web_search
+	// grounded-snippets stage both POST {url} to ${OMNIFETCH_ENDPOINT}/web_fetch.
+	OMNIFETCH_ENDPOINT?: string;
 
 	// REST auth
 	OPENWEBUI_API_KEY?: string;
 	OMNISEARCH_API_KEY?: string;
 
-	// KV namespace for caching search and fetch results (24h TTL)
+	// KV namespace for caching search and fetch results (36h TTL)
 	CACHE: KVNamespace;
 
 	// R2 bucket for full request/response tracing
@@ -68,5 +43,4 @@ export interface Env {
 	// Optional so local dev / partial configs degrade to silent no-ops.
 	AE_REQUESTS?: AnalyticsEngineDataset;
 	AE_SEARCH?: AnalyticsEngineDataset;
-	AE_FETCH?: AnalyticsEngineDataset;
 }

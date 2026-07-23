@@ -6,7 +6,6 @@ import { loggers } from '../common/logger.js';
 import { rank_and_merge, truncate_web_results, type RankedWebResult, type SnippetSource } from '../common/rrf_ranking.js';
 import { retry_with_backoff, hash_key } from '../common/utils.js';
 import { get_active_search_providers, type WebSearchProvider } from '../providers/unified/web_search.js';
-import type { UnifiedFetchProvider } from '../providers/unified/fetch.js';
 import { config, kv_cache } from '../config/env.js';
 import { TraceContext, get_active_trace, run_with_trace } from '../common/r2_trace.js';
 import { ground_top_results, type GroundingStats } from './grounded_snippets.js';
@@ -241,12 +240,10 @@ export const run_web_search_fanout = async (
 		timeout_ms?: number;
 		signal?: AbortSignal;
 		grounded_snippets?: boolean;
-		fetch_provider?: UnifiedFetchProvider;
 	},
 ): Promise<FanoutResult> => {
 	const want_grounding = options?.grounded_snippets !== false
-		&& !!config.snippet_grounding.llm.api_key
-		&& !!options?.fetch_provider;
+		&& !!config.snippet_grounding.llm.api_key;
 	const trace = new TraceContext(crypto.randomUUID(), 'web_search');
 	const parent = get_active_trace();
 	if (parent) trace.parent_trace_id = parent.trace_id;
@@ -342,15 +339,15 @@ export const run_web_search_fanout = async (
 		// query-grounded snippets from the actual page content. Failures fall
 		// back to the original aggregated snippet so a single bad URL never
 		// breaks the result set. Gated on want_grounding (default true when
-		// CEREBRAS_API_KEY is set and a fetch_provider was threaded through).
+		// CEREBRAS_API_KEY is set).
 		let web_results = ranked_results;
 		let grounding_transient_fail_count = 0;
 		let grounding_stats: GroundingStats | undefined;
-		if (want_grounding && options?.fetch_provider && ranked_results.length > 0) {
+		if (want_grounding && ranked_results.length > 0) {
 			const { results: top, truncation } = truncate_web_results(ranked_results, GROUNDING_TOP_N);
 			trace.record_decision('grounding_start', { top_n: top.length, truncation });
 			const grounding_t0 = Date.now();
-			const grounded_output = await ground_top_results(query, top, options.fetch_provider, options.signal);
+			const grounded_output = await ground_top_results(query, top, options?.signal);
 			const grounded_top = grounded_output.results;
 			grounding_transient_fail_count = grounded_output.stats.transient_fail_count;
 			grounding_stats = grounded_output.stats;

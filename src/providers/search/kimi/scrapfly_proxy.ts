@@ -28,7 +28,7 @@ const build_scrapfly_url = (
 	target_headers: Record<string, string>,
 	api_key: string,
 ): string => {
-	const url = new URL(`${config.fetch.scrapfly.base_url}${SCRAPFLY_SCRAPE_PATH}`);
+	const url = new URL(`${config.scrapfly.base_url}${SCRAPFLY_SCRAPE_PATH}`);
 	url.searchParams.set('key', api_key);
 	url.searchParams.set('url', target_url);
 	url.searchParams.set('method', 'POST');
@@ -46,7 +46,7 @@ export const proxy_post_via_scrapfly = async (
 	target_body: string,
 	timeout_ms: number,
 ): Promise<{ status: number; body: string; headers: Record<string, string> }> => {
-	const sf_key = validate_api_key(config.fetch.scrapfly.api_key, provider_name);
+	const sf_key = validate_api_key(config.scrapfly.api_key, provider_name);
 	const sf_url = build_scrapfly_url(target_url, target_headers, sf_key);
 
 	const data = await http_json<ScrapflyResponse>(provider_name, sf_url, {

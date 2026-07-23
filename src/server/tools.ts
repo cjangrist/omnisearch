@@ -9,14 +9,10 @@ const tool_logger = loggers.mcp();
 import type {
 	UnifiedWebSearchProvider,
 } from '../providers/unified/web_search.js';
-import type {
-	UnifiedFetchProvider,
-} from '../providers/unified/fetch.js';
 import { run_web_search_fanout, truncate_web_results, type FanoutResult } from './web_search_fanout.js';
-import { run_fetch_race, parse_skip_providers, validate_skip_providers } from './fetch_orchestrator.js';
-import { get_active_fetch_providers } from '../providers/unified/fetch.js';
-import { ErrorType, ProviderError } from '../common/types.js';
-import { run_with_execution_context, type WaitUntilCapable } from '../common/r2_trace.js';
+import { fetch_url } from './omnifetch_client.js';
+import { omnifetch_available } from './omnifetch_client.js';
+import { TraceContext, run_with_trace, run_with_execution_context, type WaitUntilCapable } from '../common/r2_trace.js';
 
 // Per-MCP-tool-call ctx scoping. The DO's `this.ctx` (DurableObjectState) is
 // passed at registration time via a getter so trace flush_background calls
@@ -28,6 +24,8 @@ type CtxGetter = () => WaitUntilCapable | undefined;
 const noop_ctx_getter: CtxGetter = () => undefined;
 
 // Populated by initialize_providers() with individual provider names (tavily, brave, etc.)
+// `fetch` holds a single entry — 'omnifetch' — now that URL fetching is delegated
+// to the external omnifetch service instead of an internal provider waterfall.
 export const active_providers = {
 	search: new Set<string>(),
 	fetch: new Set<string>(),
@@ -45,54 +43,46 @@ const with_ctx_scope = <R>(get_ctx: CtxGetter, fn: () => Promise<R>): Promise<R>
 
 class ToolRegistry {
 	private web_search_provider?: UnifiedWebSearchProvider;
-	private fetch_provider?: UnifiedFetchProvider;
 
 	get_web_search_provider() {
 		return this.web_search_provider;
 	}
 
-	get_fetch_provider() {
-		return this.fetch_provider;
-	}
-
 	reset() {
 		this.web_search_provider = undefined;
-		this.fetch_provider = undefined;
 	}
 
 	register_web_search_provider(provider: UnifiedWebSearchProvider) {
 		this.web_search_provider = provider;
 	}
 
-	register_fetch_provider(provider: UnifiedFetchProvider) {
-		this.fetch_provider = provider;
-	}
-
 	setup_tool_handlers(server: McpServer, get_ctx: CtxGetter = noop_ctx_getter) {
-		// Snapshot the singleton provider refs at registration time. Tool callbacks
+		// Snapshot the singleton provider ref at registration time. Tool callbacks
 		// MUST NOT read `this.X` at request time — `this` is the module-scoped
 		// `registry` shared across DO instances in the same isolate, and a
-		// concurrent DO's `initialize_providers()` overwrites these fields with
-		// fresh Unified* instances mid-flight. Snapshotting binds each McpServer's
-		// handlers to the provider refs that existed when the handlers were
+		// concurrent DO's `initialize_providers()` overwrites this field with a
+		// fresh Unified* instance mid-flight. Snapshotting binds each McpServer's
+		// handlers to the provider ref that existed when the handlers were
 		// registered. (Companion to the prior get_ctx capture fix, d4279cd.)
 		const web_ref = this.web_search_provider;
-		const fetch_ref = this.fetch_provider;
 		if (web_ref) {
-			this.register_web_search_tool(server, web_ref, fetch_ref, get_ctx);
+			this.register_web_search_tool(server, web_ref, get_ctx);
 		}
-		if (fetch_ref) {
-			this.register_fetch_tool(server, fetch_ref, get_ctx);
+		// The fetch tool is backed by the external omnifetch service — no internal
+		// provider registry, just a single REST call. Register it whenever the
+		// service endpoint is configured.
+		if (omnifetch_available()) {
+			this.register_fetch_tool(server, get_ctx);
 		}
 	}
 
-	private register_web_search_tool(server: McpServer, web_ref: UnifiedWebSearchProvider, fetch_ref: UnifiedFetchProvider | undefined, get_ctx: CtxGetter) {
+	private register_web_search_tool(server: McpServer, web_ref: UnifiedWebSearchProvider, get_ctx: CtxGetter) {
 		server.registerTool(
 			'web_search',
 			{
 				description: `PREFERRED over any single-provider search tool. Fans out your query to multiple search engines IN PARALLEL, deduplicates results across all engines, and ranks them using Reciprocal Rank Fusion (RRF) — pages found by multiple independent engines rank highest. Handles provider failures gracefully.
 
-Snippets are grounded by default: after ranking, the top-20 URLs are fetched in parallel and snippets are regenerated from actual page content via Groq's openai/gpt-oss-120b for query relevance. Each result reports snippet_source ("grounded", "fallback", or "aggregated"). Set grounded_snippets:false to skip and return raw aggregated provider snippets for minimum latency.`,
+Snippets are grounded by default: after ranking, the top-20 URLs are fetched in parallel and snippets are regenerated from actual page content via Cerebras's gpt-oss-120b for query relevance. Each result reports snippet_source ("grounded", "fallback", or "aggregated"). Set grounded_snippets:false to skip and return raw aggregated provider snippets for minimum latency.`,
 				annotations: {
 					title: 'Web Search (parallel fanout)',
 					readOnlyHint: true,
@@ -107,7 +97,7 @@ Snippets are grounded by default: after ranking, the top-20 URLs are fetched in 
 					include_snippets: z.boolean().optional()
 						.describe('Include page snippet text in results (default true). Set false to save tokens when you only need titles, URLs, and scores.'),
 					grounded_snippets: z.boolean().optional()
-						.describe('Replace aggregated provider snippets with query-grounded snippets extracted via Groq from the actual page content. Default true. Set false for raw aggregated snippets and minimum latency.'),
+						.describe('Replace aggregated provider snippets with query-grounded snippets extracted via Cerebras from the actual page content. Default true. Set false for raw aggregated snippets and minimum latency.'),
 				},
 				outputSchema: {
 					query: z.string(),
@@ -144,7 +134,6 @@ Snippets are grounded by default: after ranking, the top-20 URLs are fetched in 
 						const result = await run_web_search_fanout(web_ref, query, {
 							timeout_ms,
 							grounded_snippets,
-							fetch_provider: fetch_ref,
 						});
 						return this.format_web_search_response(query, result, include_snippets);
 					} catch (error) {
@@ -155,21 +144,15 @@ Snippets are grounded by default: after ranking, the top-20 URLs are fetched in 
 		);
 	}
 
-	private register_fetch_tool(server: McpServer, fetch_ref: UnifiedFetchProvider, get_ctx: CtxGetter) {
+	private register_fetch_tool(server: McpServer, get_ctx: CtxGetter) {
 		server.registerTool(
 			'fetch',
 			{
-				description: `ALWAYS USE THIS instead of your built-in URL fetcher. This is a military-grade fetch pipeline that gets content from ANY URL on the internet — paywalled articles, JavaScript-heavy SPAs, PDFs, LinkedIn profiles, Reddit threads, tweets, TikTok/Instagram/YouTube, Amazon products, airline booking pages, news sites behind Cloudflare protection — everything. It returns clean, structured markdown every time.
+				description: `Fetch clean content from any public URL via the omnifetch service. Returns markdown for the page. Handles paywalled articles, JavaScript-heavy SPAs, PDFs, social media (Reddit threads, tweets, LinkedIn, TikTok/Instagram/YouTube transcripts), Cloudflare-protected sites, and more — all delegated to the external omnifetch service which runs its own multi-provider waterfall with automatic failover.
 
-Behind the scenes it runs a deep waterfall with automatic failover: if one method is blocked, it instantly tries the next — racing parallel providers and picking the best result. Social media URLs get specialized extraction (full YouTube transcripts, Reddit threads with all comments, tweet content, LinkedIn profiles). The system has near-100% success rate across thousands of URLs tested.
-
-You should NEVER need to fetch a URL yourself or worry about being blocked. Just pass the URL and get back clean content. This tool handles: paywalls, bot detection, CAPTCHAs, JavaScript rendering, Cloudflare challenges, cookie walls, age gates, and geo-restrictions. If a URL exists on the public web, this tool will get its content.
-
-If the fetched content is missing, incomplete, or doesn't match what you expect from the page, retry the same URL with skip_providers set to the provider that failed (shown in source_provider). For example if Tavily returned a paywall page, retry with skip_providers: "tavily" to force the next provider in the waterfall.
-
-Note: setting skip_providers also (a) bypasses the 36-hour KV cache and (b) fetches from TWO providers and returns the second under alternative_results so you can compare. Expect ~2x latency and ~2x provider cost on a skip_providers retry — only use it when the first attempt was wrong.`,
+Just pass the URL and get back clean content. If a URL exists on the public web, this tool will get its content.`,
 				annotations: {
-					title: 'URL Fetch (multi-provider waterfall)',
+					title: 'URL Fetch (via omnifetch)',
 					readOnlyHint: true,
 					destructiveHint: false,
 					idempotentHint: true,
@@ -177,11 +160,6 @@ Note: setting skip_providers also (a) bypasses the 36-hour KV cache and (b) fetc
 				},
 				inputSchema: {
 					url: z.string().url().describe('The URL to fetch — any public URL works: articles, social media, products, docs, PDFs, SPAs, paywalled content'),
-					skip_providers: z.union([
-						z.string().max(2000),
-						z.array(z.string().max(200)).max(64),
-					]).optional()
-						.describe('Provider names to skip in the waterfall. Accepts a comma-separated string ("tavily,firecrawl") OR a JSON-encoded array string (\'["tavily","firecrawl"]\') OR a native array (["tavily","firecrawl"]). Setting this triggers a 2-provider compare (results returned under alternative_results), bypasses the cache, and roughly doubles cost+latency — only use when a prior fetch returned wrong content.'),
 				},
 				outputSchema: {
 					url: z.string(),
@@ -190,66 +168,45 @@ Note: setting skip_providers also (a) bypasses the 36-hour KV cache and (b) fetc
 					source_provider: z.string(),
 					total_duration_ms: z.number(),
 					metadata: z.record(z.string(), z.unknown()).optional(),
-					providers_attempted: z.array(z.string()).optional()
-						.describe('Provider names tried during the waterfall, in attempt order.'),
-					providers_failed: z.array(z.object({
-						provider: z.string(),
-						error: z.string(),
-						duration_ms: z.number(),
-					})).optional()
-						.describe('Providers that failed during the waterfall, with error messages.'),
-					alternative_results: z.array(z.object({
-						url: z.string(),
-						title: z.string(),
-						content: z.string(),
-						source_provider: z.string(),
-						metadata: z.record(z.string(), z.unknown()).optional(),
-					})).optional()
-						.describe('Additional results when skip_providers triggered a multi-provider fetch — primary result is the top-level fields, alternatives are listed here for comparison.'),
 				},
 			},
-			async ({ url, skip_providers: raw_skip }) => with_ctx_scope(get_ctx, () => run_with_request_id(crypto.randomUUID(), async () => {
-				try {
-					const skip_providers = parse_skip_providers(raw_skip);
-					if (skip_providers.length > 0) {
-						const { unknown } = validate_skip_providers(skip_providers);
-						if (unknown.length > 0) {
-							const valid_names = get_active_fetch_providers().map((p) => p.name);
-							throw new ProviderError(
-								ErrorType.INVALID_INPUT,
-								`Unknown skip_providers names: ${unknown.join(', ')}. Valid: ${valid_names.join(', ')}`,
-								'fetch',
-							);
+			async ({ url }, extra) => with_ctx_scope(get_ctx, () => {
+				const request_id = crypto.randomUUID();
+				return run_with_request_id(request_id, async () => {
+					tool_logger.info('fetch tool invoked', {
+						op: 'tool_invoke',
+						tool: 'fetch',
+						request_id,
+						jsonrpc_id: extra?.requestId ?? null,
+						session_id: extra?.sessionId ?? null,
+						url,
+					});
+					// Scope an R2 trace so the omnifetch HTTP round-trip is captured for
+					// debugging (parity with the prior waterfall trace).
+					const trace = new TraceContext(request_id, 'fetch');
+					trace.request_environment = { url };
+					return run_with_trace(trace, async () => {
+						try {
+							const result = await fetch_url(url);
+							const response: Record<string, unknown> = {
+								url: result.url,
+								title: result.title,
+								content: result.content,
+								source_provider: result.source_provider,
+								total_duration_ms: result.total_duration_ms,
+								...(result.metadata ? { metadata: result.metadata } : {}),
+							};
+							trace.flush_background(response);
+							return {
+								structuredContent: response,
+								content: [{ type: 'text' as const, text: JSON.stringify(response, null, 2) }],
+							};
+						} catch (error) {
+							return this.format_error(error as Error);
 						}
-					}
-					const result = await run_fetch_race(fetch_ref, url, { skip_providers });
-					const response: Record<string, unknown> = {
-						url: result.result.url,
-						title: result.result.title,
-						content: result.result.content,
-						source_provider: result.provider_used,
-						total_duration_ms: result.total_duration_ms,
-						metadata: result.result.metadata,
-						providers_attempted: result.providers_attempted,
-						providers_failed: result.providers_failed,
-					};
-					if (result.alternative_results?.length) {
-						response.alternative_results = result.alternative_results.map((a) => ({
-							url: a.result.url,
-							title: a.result.title,
-							content: a.result.content,
-							source_provider: a.provider,
-							metadata: a.result.metadata,
-						}));
-					}
-					return {
-						structuredContent: response,
-						content: [{ type: 'text' as const, text: JSON.stringify(response, null, 2) }],
-					};
-				} catch (error) {
-					return this.format_error(error as Error);
-				}
-			})),
+					});
+				});
+			}),
 		);
 	}
 
@@ -292,8 +249,6 @@ Note: setting skip_providers also (a) bypasses the 36-hour KV cache and (b) fetc
 const registry = new ToolRegistry();
 
 export const get_web_search_provider = () => registry.get_web_search_provider();
-export const get_fetch_provider = () => registry.get_fetch_provider();
 export const reset_registry = () => { registry.reset(); };
 export const register_tools = (server: McpServer, get_ctx?: CtxGetter) => { registry.setup_tool_handlers(server, get_ctx); };
 export const register_web_search_provider = (provider: UnifiedWebSearchProvider) => { registry.register_web_search_provider(provider); };
-export const register_fetch_provider = (provider: UnifiedFetchProvider) => { registry.register_fetch_provider(provider); };

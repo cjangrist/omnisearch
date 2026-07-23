@@ -26,12 +26,11 @@ Kimi (Moonshot AI) coding-API search. Backs the SearchWeb tool in Kimi CLI. Rout
 
 ## Gotchas / History
 
-- **Currently disabled in production** per `docs/kimi-search-roi-analysis.md`: Kimi was the slowest, least reliable, and most expensive search provider with minimal unique-URL contribution. The folder is preserved for re-enable if the upstream improves.
-- **Both keys required**. Setting only `KIMI_API_KEY` leaves the provider inactive; setting only `SCRAPFLY_API_KEY` similarly leaves it inactive (the registration's `key()` checks `KIMI_API_KEY`, but the implementation also calls `validate_api_key(config.fetch.scrapfly.api_key, ...)` indirectly through the proxy helper).
+- **Currently disabled in production** (no key set): Kimi was the slowest, least reliable, and most expensive search provider with minimal unique-URL contribution. The folder is preserved for re-enable if the upstream improves.
+- **Both keys required**. Setting only `KIMI_API_KEY` leaves the provider inactive; setting only `SCRAPFLY_API_KEY` similarly leaves it inactive (the registration's `key()` checks `KIMI_API_KEY`, but the implementation also calls `validate_api_key(config.scrapfly.api_key, ...)` indirectly through the proxy helper).
 - **Outer/inner timeout symmetry**: `timeout_seconds: 30` in the body and `config.search.kimi.timeout = 30000ms` outer. Scrapfly proxy adds latency; the outer can fire while the inner is still processing. Orchestrator handles either outcome.
 
 ## Related
 
 - Registered as `kimi` in `../../unified/web_search.ts`.
-- Sister module: `../../fetch/kimi/` — Kimi fetch is a separate code path; **fetch is active even when search is disabled**.
-- `docs/kimi-search-roi-analysis.md` — why search is dormant.
+- Scrapfly proxy helper: `scrapfly_proxy.ts` reads `config.scrapfly.api_key` (top-level, not `config.fetch.scrapfly`).

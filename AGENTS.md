@@ -1,6 +1,6 @@
 # AGENTS.md — repo root
 
-You are at the top of `omnisearch` — a Cloudflare-Workers MCP server that aggregates web search and URL fetching across many providers. This file is your map. If you can answer "where do I look for X" from here without grepping, it has done its job.
+You are at the top of `omnisearch` — a Cloudflare-Workers MCP server that aggregates web search across many providers and delegates URL fetching to the external **omnifetch** service. This file is your map. If you can answer "where do I look for X" from here without grepping, it has done its job.
 
 ## Top-level layout
 
@@ -11,9 +11,8 @@ You are at the top of `omnisearch` — a Cloudflare-Workers MCP server that aggr
 | `package.json` | ESM (`"type": "module"`). Deps: `@modelcontextprotocol/sdk ^1.29`, `agents`, `p-retry`, `zod`. Dev: `wrangler`, `typescript ^6.0.3`, `@cloudflare/workers-types`. Scripts: `dev`, `deploy`, `typecheck`. |
 | `wrangler.toml` | CF Worker entry (`src/worker.ts`), `nodejs_compat` flag (required for `node:async_hooks`), DO binding `OmnisearchMCP`, KV binding `CACHE`, R2 binding `TRACE_BUCKET`, SQLite-classes migration tag `v1`. |
 | `tsconfig.json` | TypeScript 6 config. |
-| `config.yaml` | Documentation copy of the fetch waterfall + breakers + failure heuristics. **The runtime mirror is `CONFIG` in `src/server/fetch_orchestrator.ts`**. The TS literal is the source of truth — `config.yaml` is never loaded at startup. The two have drifted; treat `config.yaml` as advisory only. |
 | `.env.example` | Documents env vars. Secrets live in Doppler / `wrangler secret`. May lag the actual `src/types/env.ts` — if a binding works at runtime but isn't in `.env.example`, regenerate from `types/env.ts`. |
-| `docs/` | Postmortems, ROI analyses, multi-reviewer hydra-heads synthesis docs. See `docs/AGENTS.md`. |
+| `docs/` | Reserved for postmortems / synthesis docs. Currently holds only `docs/AGENTS.md`. See `docs/AGENTS.md`. |
 | `src/` | Implementation. See `src/AGENTS.md`. |
 | `tools/` | Offline harnesses (Python). Currently: `grounding_smoke.py`, `grounding_compare.py`, `grounding_lib.py` — before/after comparison runs for the grounded-snippets feature against fixed query corpora. Not deployed; run locally for tuning. |
 | `tmp/` | Hydra-review sandboxes, ad-hoc test artifacts. **Ignore — do not edit, do not include in releases.** |
@@ -22,15 +21,15 @@ You are at the top of `omnisearch` — a Cloudflare-Workers MCP server that aggr
 
 ## Provider count cheatsheet
 
-The active provider count from `/health` is `search.size + fetch.size`, populated by `initialize_providers()`. With every key set, the upper bound is **39**:
+The active provider count from `/health` is `search.size + fetch.size`, populated by `initialize_providers()`. With every key set, the upper bound is **12**:
 - **11 search providers**: tavily, brave, kagi, exa, firecrawl, perplexity, serpapi, linkup, you, kimi, parallel (kimi requires both `KIMI_API_KEY` and `SCRAPFLY_API_KEY`; parallel uses `PARALLEL_API_KEY`).
-- **28 fetch providers** (the count is from `unified/fetch.ts PROVIDERS` length).
+- **1 fetch entry** — `omnifetch`, added when `OMNIFETCH_ENDPOINT` is configured. omnisearch no longer has fetch providers; the multi-provider waterfall lives in the external [omnifetch](https://github.com/cjangrist/omnifetch) service.
 
 ## Where do I look for X?
 
 **Adding a search provider** → `src/providers/search/<name>/index.ts` for the adapter + one line in `src/providers/unified/web_search.ts`'s `PROVIDERS`. Also wire env in `src/types/env.ts` + `src/config/env.ts`.
 
-**Adding a fetch provider** → `src/providers/fetch/<name>/` + `src/providers/unified/fetch.ts`. If it should run in the auto-waterfall, also slot it into `src/server/fetch_orchestrator.ts CONFIG.waterfall` (and update `config.yaml` to keep documentation in sync). If it's a domain-specialist (YouTube transcripts, social media, GitHub), wire it into `CONFIG.breakers` instead.
+**Adding a fetch provider** → fetch providers no longer live in this repo. omnisearch delegates all URL fetching to the external [omnifetch](https://github.com/cjangrist/omnifetch) service via a single REST call (`src/server/omnifetch_client.ts`). Add new waterfall steps / breakers / providers there, not here.
 
 **Routing / REST endpoint behavior** → `src/worker.ts` (top-level handler + SSE keepalive), `src/server/rest_*.ts` (one file per endpoint).
 
@@ -38,10 +37,10 @@ The active provider count from `/health` is `search.size + fetch.size`, populate
 
 **Orchestrator behavior** —
 - search fanout + RRF + cache + tail rescue + grounded-snippets stage → `src/server/web_search_fanout.ts`
-- fetch waterfall + breakers + multi-winner parallel race + skip_providers + cache → `src/server/fetch_orchestrator.ts`
-- grounded snippets (Groq) — top-N URLs fetched + summarized after RRF → `src/server/grounded_snippets.ts` + `src/server/grounded_prompts.ts`. Default ON when `GROQ_API_KEY` is set; opt-out per call with `grounded_snippets:false`.
+- fetch → `src/server/omnifetch_client.ts` — a single REST `POST ${OMNIFETCH_ENDPOINT}/web_fetch` with body `{url}`. No internal waterfall, breakers, skip_providers, or cache; omnifetch owns all of that.
+- grounded snippets (Cerebras) — top-N URLs fetched via omnifetch + summarized after RRF → `src/server/grounded_snippets.ts` + `src/server/grounded_prompts.ts`. Default ON when `CEREBRAS_API_KEY` is set; opt-out per call with `grounded_snippets:false`.
 
-**Caching** — every orchestrator has a `is_valid_cached_*` validator and binds the request key (`query` or `requested_url`) inside the cached payload as defense-in-depth. See `README.md` "Caching" section.
+**Caching** — `web_search` has a `is_valid_cached_fanout` validator and binds the `query` inside the cached payload as defense-in-depth. The `fetch` tool does NOT cache in omnisearch (it delegates to omnifetch, which may cache internally). See `README.md` "Caching" section.
 
 **Tracing** → `src/common/r2_trace.ts`. `TraceContext` is the data model; `run_with_trace(ctx, fn)` scopes it via AsyncLocalStorage; `flush_background(final_result)` writes to R2 via the request's `ctx.waitUntil`. The R2 bucket is hive-partitioned by tool/date/hour.
 
@@ -63,12 +62,11 @@ The active provider count from `/health` is `search.size + fetch.size`, populate
 
 ## Common debugging entry points
 
-- **Cache pollution / cross-prompt leaks** → check `is_valid_cached_fanout` (`web_search_fanout.ts`), `is_valid_cached_fetch` (`fetch_orchestrator.ts`).
-- **Empty MCP envelope** → `docs/mcp-empty-payload-anomaly.md` (open intermittent issue at high concurrency). Workaround documented there: call serially.
+- **Cache pollution / cross-prompt leaks** → check `is_valid_cached_fanout` (`web_search_fanout.ts`). (Fetch no longer caches in omnisearch — it delegates to omnifetch.)
+- **Empty MCP envelope** → intermittent issue at high concurrency where concurrent long-running calls return empty JSON-RPC envelopes. Workaround: call serially. (Historical postmortem docs were removed; the behavior is documented in `worker.ts`'s SSE keepalive injection.)
 - **Provider count drift** → look at `active_providers` in `src/server/tools.ts` (populated by `initialize_providers`). `/health` endpoint reports the live total.
 - **Why is provider X not being called?** Check `key()` returns a non-empty trimmed string in the appropriate `unified/*.ts` `PROVIDERS` array.
 - **Trace not showing up in R2** → confirm `TRACE_BUCKET` binding exists in `wrangler.toml` and `set_trace_r2_bucket(env.TRACE_BUCKET)` ran (in `initialize_config`). If `_r2_bucket` is undefined, `flush_background` is a no-op.
-- **Skip_providers feature** → `src/server/fetch_orchestrator.ts` `parse_skip_providers` + `validate_skip_providers`. 9-reviewer multi-CLI synthesis lives at `docs/skip_providers_review_synthesis.md`.
 
 ## Conventions / Invariants (root-level)
 
@@ -77,17 +75,16 @@ The active provider count from `/health` is `search.size + fetch.size`, populate
 - **AsyncLocalStorage everywhere**: never module-scope per-request state. Anything that varies per request (request_id, ExecutionContext, TraceContext) lives in an ALS store.
 - **`hash_key` is async** — always `await` it.
 - **Module-level config singleton** (`src/config/env.ts`) populated by `initialize_config(env)` — must be called before any provider access.
-- **Tokens cheap, correctness paramount**: prefer reading the full file over inferring from path names. The codebase has 11-file providers (github), proxy-routed providers (kimi), async-poll providers (supadata) — none of which would be correctly described by their folder name alone.
+- **Tokens cheap, correctness paramount**: prefer reading the full file over inferring from path names. The codebase has multi-file providers (kimi search: `index.ts` + `headers.ts` + `scrapfly_proxy.ts`) and proxy-routed providers — none of which would be correctly described by their folder name alone.
 
 ## Gotchas / History
 
-- **Skip_providers is on `fetch` only.** It does NOT exist on the `web_search` tool. Several upstream prompts confused this — the code is the source of truth (`src/server/tools.ts`). (Internally, `grounded_snippets.ts` does pass `skip_providers={attempt-1 winner}` into `run_fetch_race` for its retry path, but that's not exposed as a tool input.)
-- **Kimi search is registered but currently disabled** (no key configured). Per `docs/kimi-search-roi-analysis.md`: median query gets zero unique URLs from Kimi, 41% of attempts time-abort, and Scrapfly residential proxy adds ~$0.00875/call. Do NOT delete the provider — keep it dormant for re-enable if the upstream improves. Kimi *fetch* (separate path) is still active.
+- **Fetch is delegated, not duplicated.** omnisearch no longer runs a fetch waterfall — there is no `skip_providers`, no `provider`, no `skip_cache` on the `fetch` tool. All URL fetching goes through `src/server/omnifetch_client.ts` → omnifetch `/web_fetch`. The waterfall, breakers, and multi-provider racing live in the [omnifetch](https://github.com/cjangrist/omnifetch) repo.
+- **Kimi search is registered but currently disabled** (no key configured) — the slowest, least reliable, and most expensive search provider with minimal unique-URL contribution. Do NOT delete the provider — keep it dormant for re-enable if the upstream improves. Routed through Scrapfly residential proxy (`config.scrapfly`); requires both `KIMI_API_KEY` and `SCRAPFLY_API_KEY`.
 - **Brave uses `BRAVE_API_KEY`** for web search.
 - **The DO is stateful.** Each MCP client session gets its own DO instance. R4F01 (per-closure ctx capture) exists because the `tools.ts` module-level registry is shared across DOs in the same isolate; capturing `() => this.ctx` per registration call keeps each tool callback bound to the DO that registered it.
 - **The R2 trace bucket is private and stores unredacted payloads.** Sensitive query params are redacted in *log output* but not in R2 traces — by design, for incident debugging. Do not change without checking with the user.
 - **`/researcher` accepts auth as `?api_key=...` query param** for GPT-Researcher compatibility — REST handler converts it to a Bearer header internally before calling the shared `authenticate_rest_request`.
-- **`config.yaml` is documentation only** — the runtime fetch waterfall is the `CONFIG` literal in `fetch_orchestrator.ts`. The two have drifted. If you edit one, update the other; better still, treat the TS as canonical and regenerate the YAML.
 
 ## Related
 
