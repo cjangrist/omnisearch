@@ -10,7 +10,7 @@ TypeScript type definitions specific to the Worker runtime. Two files only.
   Members:
   - **Search keys**: `TAVILY_API_KEY`, `BRAVE_API_KEY`, `KAGI_API_KEY`, `EXA_API_KEY`, `SERPAPI_API_KEY`, `LINKUP_API_KEY`, `PARALLEL_API_KEY`, `PERPLEXITY_API_KEY`, `FIRECRAWL_API_KEY`, `YOU_API_KEY`.
   - **Snippet-grounding key**: `CEREBRAS_API_KEY` — when set, `web_search` / `POST /search` regenerate top-N snippets via Cerebras from actual page content (see `src/server/grounded_snippets.ts`). Default ON when present; opt-out via per-call `grounded_snippets:false`.
-  - **omnifetch endpoint**: `OMNIFETCH_ENDPOINT` — base URL of the external omnifetch service (owns all URL fetching). Defaults to `http://127.0.0.1:8000`.
+  - **omnifetch endpoint**: `OMNIFETCH_ENDPOINT` — base URL of the external omnifetch service (owns all URL fetching). Undefined when unset.
   - **REST auth**: `OPENWEBUI_API_KEY`, `OMNISEARCH_API_KEY`.
   - **CF resources**: `CACHE: KVNamespace`, `TRACE_BUCKET: R2Bucket`, `OmnisearchMCP: DurableObjectNamespace`, `AE_REQUESTS` / `AE_SEARCH` (Analytics Engine datasets).
 - **`node-async-hooks.d.ts`** — Minimal type stub for `node:async_hooks AsyncLocalStorage`. Workerd provides AsyncLocalStorage at runtime when `nodejs_compat` is enabled in `wrangler.toml`. We don't ship full `@types/node` — the stub declares only `AsyncLocalStorage<T>` with `getStore()` and `run(store, fn)`, which is what we use.

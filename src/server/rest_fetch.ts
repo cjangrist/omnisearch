@@ -55,7 +55,7 @@ export async function handle_rest_fetch(
 	});
 
 	try {
-		const result = await fetch_url(url);
+		const result = await fetch_url(url, request.signal);
 
 		const duration = Date.now() - start_time;
 		logger.info('Fetch completed', {

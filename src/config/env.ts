@@ -15,9 +15,8 @@ export let OMNISEARCH_API_KEY: string | undefined;
 // omnifetch service base URL — the external service that owns all URL fetching
 // (the multi-provider waterfall, now externalized). omnisearch's `fetch` tool
 // and the web_search grounded-snippets stage both POST {url} to
-// ${OMNIFETCH_ENDPOINT}/web_fetch. Public endpoint (no auth). Set via env;
-// defaults to the local docker-compose service for dev.
-export let OMNIFETCH_ENDPOINT: string;
+// ${OMNIFETCH_ENDPOINT}/web_fetch. Public endpoint (no auth). Set via env.
+export let OMNIFETCH_ENDPOINT: string | undefined;
 
 // KV namespace for caching (set during initialize_config)
 export let kv_cache: KVNamespace | undefined;
@@ -126,7 +125,7 @@ export const initialize_config = (env: Env) => {
 
 	OPENWEBUI_API_KEY = env.OPENWEBUI_API_KEY;
 	OMNISEARCH_API_KEY = env.OMNISEARCH_API_KEY;
-	OMNIFETCH_ENDPOINT = env.OMNIFETCH_ENDPOINT?.trim() || 'http://127.0.0.1:8000';
+	OMNIFETCH_ENDPOINT = env.OMNIFETCH_ENDPOINT?.trim() || undefined;
 	kv_cache = env.CACHE;
 	set_trace_r2_bucket(env.TRACE_BUCKET);
 	set_analytics_datasets({ requests: env.AE_REQUESTS, search: env.AE_SEARCH });

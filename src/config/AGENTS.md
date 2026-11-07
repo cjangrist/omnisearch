@@ -6,7 +6,7 @@ Runtime configuration. Populated per-Worker-isolate from Cloudflare Worker env b
 
 - **`env.ts`** — Single source of truth for runtime config.
   - Exports `config` — a frozen-shape literal with two keys: `search`, `snippet_grounding`. Each search provider has `api_key` + `base_url` + `timeout`; `snippet_grounding.llm` holds the grounding-LLM settings.
-  - Exports `OPENWEBUI_API_KEY`, `OMNISEARCH_API_KEY`, `OMNIFETCH_ENDPOINT`, `kv_cache` — top-level singletons set by `initialize_config(env)`. `OMNIFETCH_ENDPOINT` is the base URL of the external omnifetch service (defaults to `http://127.0.0.1:8000` when the env var is unset/empty); omnisearch POSTs `{url}` to `${OMNIFETCH_ENDPOINT}/web_fetch`.
+  - Exports `OPENWEBUI_API_KEY`, `OMNISEARCH_API_KEY`, `OMNIFETCH_ENDPOINT`, `kv_cache` — top-level singletons set by `initialize_config(env)`. `OMNIFETCH_ENDPOINT` is the base URL of the external omnifetch service (`undefined` when unset/empty); omnisearch POSTs `{url}` to `${OMNIFETCH_ENDPOINT}/web_fetch`.
   - `initialize_config(env)` populates `config.*.api_key` from env bindings, sets `OMNIFETCH_ENDPOINT`, sets the KV cache reference, and calls `set_trace_r2_bucket(env.TRACE_BUCKET)` so removing a binding takes effect on the next isolate boot.
   - `validate_config()` walks the config tree, logs counts of available vs. missing providers (including `snippet_grounding.llm`). Called once per init.
 

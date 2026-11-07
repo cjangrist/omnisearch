@@ -183,7 +183,7 @@ Just pass the URL and get back clean content. If a URL exists on the public web,
 					trace.request_environment = { url };
 					return run_with_trace(trace, async () => {
 						try {
-							const result = await fetch_url(url);
+							const result = await fetch_url(url, extra?.signal);
 							const response: Record<string, unknown> = {
 								url: result.url,
 								title: result.title,

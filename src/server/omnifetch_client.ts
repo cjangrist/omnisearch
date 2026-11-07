@@ -12,10 +12,12 @@
 
 import { http_json } from '../common/http.js';
 import { ErrorType, ProviderError } from '../common/types.js';
+import { make_signal } from '../common/utils.js';
 import { loggers } from '../common/logger.js';
 import { OMNIFETCH_ENDPOINT } from '../config/env.js';
 
 const logger = loggers.fetch();
+const OMNIFETCH_TIMEOUT_MS = 60000;
 
 export interface OmnifetchResult {
 	url: string;
@@ -56,7 +58,7 @@ export const fetch_url = async (url: string, signal?: AbortSignal): Promise<Omni
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ url }),
-			...(signal ? { signal } : {}),
+			signal: make_signal(OMNIFETCH_TIMEOUT_MS, signal),
 		},
 	);
 
