@@ -31,8 +31,6 @@ interface TavilySearchResponse {
 
 export class TavilySearchProvider implements SearchProvider {
 	name = 'tavily';
-	description =
-		'Search the web using Tavily Search API. Best for factual queries requiring reliable sources and citations. Supports domain filtering through API parameters (include_domains/exclude_domains). Provides high-quality results for technical, scientific, and academic topics. Use when you need verified information with strong citation support.';
 
 	async search(params: BaseSearchParams): Promise<SearchResult[]> {
 		const api_key = validate_api_key(

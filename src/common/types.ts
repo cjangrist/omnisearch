@@ -6,7 +6,6 @@ export interface SearchResult {
 	snippet: string;
 	score?: number;
 	source_provider: string;
-	metadata?: Record<string, unknown>;
 }
 
 export interface BaseSearchParams {
@@ -21,21 +20,6 @@ export interface BaseSearchParams {
 export interface SearchProvider {
 	search(params: BaseSearchParams): Promise<SearchResult[]>;
 	name: string;
-	description: string;
-}
-
-export interface FetchResult {
-	url: string;
-	title: string;
-	content: string;
-	source_provider: string;
-	metadata?: Record<string, unknown>;
-}
-
-export interface FetchProvider {
-	fetch_url(url: string): Promise<FetchResult>;
-	name: string;
-	description: string;
 }
 
 // Error types
@@ -43,7 +27,6 @@ export enum ErrorType {
 	API_ERROR = 'API_ERROR',
 	RATE_LIMIT = 'RATE_LIMIT',
 	INVALID_INPUT = 'INVALID_INPUT',
-	NOT_FOUND = 'NOT_FOUND',
 	PROVIDER_ERROR = 'PROVIDER_ERROR',
 }
 
@@ -52,7 +35,6 @@ export class ProviderError extends Error {
 		public type: ErrorType,
 		message: string,
 		public provider: string,
-		public details?: unknown,
 	) {
 		super(message);
 		this.name = 'ProviderError';

@@ -6,7 +6,6 @@ import { loggers } from '../common/logger.js';
 import { rank_and_merge, truncate_web_results, type RankedWebResult, type SnippetSource } from '../common/rrf_ranking.js';
 import { retry_with_backoff, hash_key } from '../common/utils.js';
 import { get_active_search_providers, type WebSearchProvider } from '../providers/unified/web_search.js';
-import type { UnifiedFetchProvider } from '../providers/unified/fetch.js';
 import { config, kv_cache } from '../config/env.js';
 import { TraceContext, get_active_trace, run_with_trace } from '../common/r2_trace.js';
 import { ground_top_results, type GroundingStats } from './grounded_snippets.js';
@@ -17,12 +16,6 @@ const logger = loggers.search();
 const DEFAULT_TOP_N = 20;
 const GROUNDING_TOP_N = 20;
 const KV_SEARCH_TTL_SECONDS = 129_600; // 36 hours
-// Re-enabled 2026-05-20 after the snippet prompt stabilized (Phases 1-3) AND
-// the two HIGH caching-correctness fixes from the hh review landed (paywall
-// poisoning in is_fetch_failure, transient-grounding gating in is_complete_fanout).
-// Cached payloads embed LLM-generated snippets; flip back to false during any
-// future prompt iteration so cache hits don't mask in-flight prompt edits.
-const GROUNDED_RESULT_CACHE_ENABLED = true;
 const VALID_SNIPPET_SOURCES: ReadonlySet<SnippetSource> = new Set<SnippetSource>(['aggregated', 'grounded', 'fallback']);
 
 const make_cache_key = (query: string, options?: { skip_quality_filter?: boolean; grounded?: boolean }): Promise<string> => {
@@ -102,7 +95,6 @@ const dispatch_to_providers = async (
 	active: Array<{ name: string }>,
 	per_provider_limit: number,
 	timeout_ms?: number,
-	signal?: AbortSignal,
 ): Promise<{
 	results_by_provider: Map<string, SearchResult[]>;
 	providers_succeeded: Array<{ provider: string; duration_ms: number }>;
@@ -123,17 +115,7 @@ const dispatch_to_providers = async (
 	// Create a deadline controller that we abort when timeout_ms fires,
 	// so in-flight provider HTTP requests are cancelled instead of running to completion.
 	const deadline_controller = timeout_ms ? new AbortController() : undefined;
-	// Combine external signal with deadline signal, using polyfill-safe path
-	let combined_signal = signal;
-	if (deadline_controller) {
-		if (signal) {
-			combined_signal = typeof AbortSignal.any === 'function'
-				? AbortSignal.any([signal, deadline_controller.signal])
-				: deadline_controller.signal; // fallback: deadline only (external signal still respected by providers via make_signal)
-		} else {
-			combined_signal = deadline_controller.signal;
-		}
-	}
+	const combined_signal = deadline_controller?.signal;
 
 	const provider_promises = active.map(async (p) => {
 		const t0 = Date.now();
@@ -237,16 +219,12 @@ export const run_web_search_fanout = async (
 	query: string,
 	options?: {
 		skip_quality_filter?: boolean;
-		limit?: number;
 		timeout_ms?: number;
-		signal?: AbortSignal;
 		grounded_snippets?: boolean;
-		fetch_provider?: UnifiedFetchProvider;
 	},
 ): Promise<FanoutResult> => {
 	const want_grounding = options?.grounded_snippets !== false
-		&& !!config.snippet_grounding.llm.api_key
-		&& !!options?.fetch_provider;
+		&& !!config.snippet_grounding.llm.api_key;
 	const trace = new TraceContext(crypto.randomUUID(), 'web_search');
 	const parent = get_active_trace();
 	if (parent) trace.parent_trace_id = parent.trace_id;
@@ -254,18 +232,16 @@ export const run_web_search_fanout = async (
 	trace.request_environment = {
 		query,
 		skip_quality_filter: options?.skip_quality_filter,
-		limit: options?.limit,
 		timeout_ms: options?.timeout_ms,
 		grounded_snippets: want_grounding,
 	};
 
 	return run_with_trace(trace, async () => {
-		// Return cached result if available (deduplicates gemini-grounded web search inside answer fanout).
+		// Return cached result if available (deduplicates repeated identical queries).
 		// Defense-in-depth: also require cached.query === query so a SHA-256-collision-defying
 		// future bug couldn't silently serve a different query's results.
-		const cache_read_enabled = !want_grounding || GROUNDED_RESULT_CACHE_ENABLED;
 		const cache_key = await make_cache_key(query, { skip_quality_filter: options?.skip_quality_filter, grounded: want_grounding });
-		const cached_raw = cache_read_enabled ? await get_cached(cache_key) : undefined;
+		const cached_raw = await get_cached(cache_key);
 		const cached = cached_raw && cached_raw.query === query ? cached_raw : undefined;
 		if (cached) {
 			logger.debug('Returning cached fanout result', { op: 'fanout_cache_hit', query: query.slice(0, 100), grounded: want_grounding });
@@ -283,7 +259,7 @@ export const run_web_search_fanout = async (
 			return cached;
 		}
 
-		const per_provider_limit = options?.limit ?? DEFAULT_TOP_N;
+		const per_provider_limit = DEFAULT_TOP_N;
 		const active = get_active_search_providers();
 
 		if (active.length === 0) {
@@ -313,7 +289,7 @@ export const run_web_search_fanout = async (
 
 		const fanout_start = Date.now();
 		const { results_by_provider, providers_succeeded, providers_failed } =
-			await dispatch_to_providers(web_provider, query, active, per_provider_limit, options?.timeout_ms, options?.signal);
+			await dispatch_to_providers(web_provider, query, active, per_provider_limit, options?.timeout_ms);
 
 		const dispatch_duration = Date.now() - fanout_start;
 
@@ -342,15 +318,15 @@ export const run_web_search_fanout = async (
 		// query-grounded snippets from the actual page content. Failures fall
 		// back to the original aggregated snippet so a single bad URL never
 		// breaks the result set. Gated on want_grounding (default true when
-		// CEREBRAS_API_KEY is set and a fetch_provider was threaded through).
+		// CEREBRAS_API_KEY is set).
 		let web_results = ranked_results;
 		let grounding_transient_fail_count = 0;
 		let grounding_stats: GroundingStats | undefined;
-		if (want_grounding && options?.fetch_provider && ranked_results.length > 0) {
+		if (want_grounding && ranked_results.length > 0) {
 			const { results: top, truncation } = truncate_web_results(ranked_results, GROUNDING_TOP_N);
 			trace.record_decision('grounding_start', { top_n: top.length, truncation });
 			const grounding_t0 = Date.now();
-			const grounded_output = await ground_top_results(query, top, options.fetch_provider, options.signal);
+			const grounded_output = await ground_top_results(query, top);
 			const grounded_top = grounded_output.results;
 			grounding_transient_fail_count = grounded_output.stats.transient_fail_count;
 			grounding_stats = grounded_output.stats;
@@ -409,9 +385,9 @@ export const run_web_search_fanout = async (
 		});
 
 		// Only cache COMPLETE fanouts (every active provider settled successfully).
-		// Otherwise a partial — including timeout-limited internal calls from
-		// gemini-grounded — would poison the shared cache key with a one-provider
-		// result that subsequent unconstrained /search calls would receive for 36h.
+		// Otherwise a partial — including any timeout-limited provider — would
+		// poison the shared cache key with a one-provider result that subsequent
+		// unconstrained /search calls would receive for 36h.
 		//
 		// "Complete" now includes the grounding stage when want_grounding is true:
 		// an all-fallback grounding (every URL hit llm_error / pipeline_timeout /
@@ -426,15 +402,8 @@ export const run_web_search_fanout = async (
 		const is_complete_fanout = providers_succeeded.length > 0
 			&& providers_failed.length === 0
 			&& grounding_complete;
-		const cache_write_enabled = !want_grounding || GROUNDED_RESULT_CACHE_ENABLED;
-		if (is_complete_fanout && cache_write_enabled) {
+		if (is_complete_fanout) {
 			await set_cached(cache_key, result);
-		} else if (providers_succeeded.length > 0 && !cache_write_enabled) {
-			logger.debug('Skipping search cache write (grounded cache disabled)', {
-				op: 'search_cache_skip_grounded_disabled',
-				succeeded: providers_succeeded.length,
-				failed: providers_failed.length,
-			});
 		} else if (providers_succeeded.length > 0 && !grounding_complete) {
 			logger.debug('Skipping search cache write (grounding transient failures)', {
 				op: 'search_cache_skip_grounding_transient',

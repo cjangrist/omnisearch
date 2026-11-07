@@ -5,10 +5,6 @@ import { get_active_trace, extract_headers_from_init, extract_response_headers, 
 
 const logger = loggers.http();
 
-interface HttpOptions extends RequestInit {
-	expectedStatuses?: number[];
-}
-
 const tryParseJson = (text: string) => {
 	if (!text) return undefined;
 	try {
@@ -41,8 +37,8 @@ const sanitize_url = (raw_url: string): string => {
 const http_core = async (
 	provider: string,
 	url: string,
-	options: HttpOptions = {},
-): Promise<{ raw: string; status: number }> => {
+	options: RequestInit = {},
+): Promise<string> => {
 	const request_start = Date.now();
 	const trace = get_active_trace();
 	const trace_req = trace ? {
@@ -116,12 +112,7 @@ const http_core = async (
 	// Record full HTTP call in R2 trace (unredacted, before any status-based throws)
 	trace_record(res.status, extract_response_headers(res.headers), tryParseJson(raw) ?? raw, total_bytes);
 
-	const okOrExpected =
-		res.ok ||
-		(options.expectedStatuses &&
-			options.expectedStatuses.includes(res.status));
-
-	if (!okOrExpected) {
+	if (!res.ok) {
 		const body = tryParseJson(raw);
 		const safe_message =
 			(body && typeof (body.message || body.error || body.detail) === 'string')
@@ -160,27 +151,17 @@ const http_core = async (
 		content_length_bytes: total_bytes,
 	});
 
-	return { raw, status: res.status };
+	return raw;
 };
 
 // Returns parsed JSON
 export const http_json = async <T = unknown>(
 	provider: string,
 	url: string,
-	options: HttpOptions = {},
+	options: RequestInit = {},
 ): Promise<T> => {
-	const { raw } = await http_core(provider, url, options);
+	const raw = await http_core(provider, url, options);
 	const body = tryParseJson(raw);
 	if (body !== undefined) return body as T;
 	throw new ProviderError(ErrorType.API_ERROR, `Invalid JSON response from ${provider}`, provider);
-};
-
-// Returns raw text (for providers that return HTML/markdown/plain text)
-export const http_text = async (
-	provider: string,
-	url: string,
-	options: HttpOptions = {},
-): Promise<string> => {
-	const { raw } = await http_core(provider, url, options);
-	return raw;
 };

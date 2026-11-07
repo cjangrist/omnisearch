@@ -1,7 +1,7 @@
 // Cloudflare Workers entry point — stateful McpAgent (Durable Object) mode.
-// Each client session gets its own DO instance; GET /mcp holds a live SSE stream
-// that receives progress notifications every 5s during long-running answer fanouts,
-// preventing Claude web's 45-second timeout from killing the connection.
+// Each client session gets its own DO instance. The /mcp response stream is wrapped
+// with an injected SSE keepalive (every 5s) so long-running tool calls don't get
+// torn down by Cloudflare's edge proxy or Claude web's 45-second timeout.
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { McpAgent } from 'agents/mcp';
@@ -63,11 +63,9 @@ const SSE_KEEPALIVE_INTERVAL_MS = 5_000;
 const SSE_PING = new TextEncoder().encode('event: ping\ndata: keepalive\n\n');
 
 const inject_sse_keepalive = (original: Response): Response => {
-	if (!original.body) return original;
-
 	const { readable, writable } = new TransformStream();
 	const writer = writable.getWriter();
-	const reader = original.body.getReader();
+	const reader = original.body!.getReader();
 	let closed = false;
 
 	// Buffer as a list of chunks — avoids O(n^2) Uint8Array concatenation on every read.
@@ -318,7 +316,7 @@ export default {
 		// Ensure the worker isolate has the AE datasets for the per-request metric.
 		// (The DO isolate sets its own copy in _do_init for the search/fetch datasets
 		// it emits during tool execution.) Cheap + idempotent.
-		set_analytics_datasets({ requests: env.AE_REQUESTS, search: env.AE_SEARCH, fetch: env.AE_FETCH });
+		set_analytics_datasets({ requests: env.AE_REQUESTS, search: env.AE_SEARCH });
 
 		// Scope ExecutionContext per-request via AsyncLocalStorage so flush_background
 		// always attaches to the originating request's ctx (no module-level race).
@@ -422,7 +420,7 @@ async function handle_request(request: Request, env: Env, ctx: ExecutionContext,
 			logger.response(request.method, url.pathname, 200, duration, { request_id });
 			// Try to init so we can report provider availability
 			try { await ensure_rest_initialized(env); } catch { /* best effort */ }
-			const total = active_providers.search.size + active_providers.ai_response.size + active_providers.fetch.size;
+			const total = active_providers.search.size + active_providers.fetch.size;
 			return add_cors_headers(new Response(
 				JSON.stringify({
 					status: total > 0 ? 'ok' : 'degraded',

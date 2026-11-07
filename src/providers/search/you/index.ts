@@ -41,8 +41,6 @@ interface YouSearchResponse {
 
 export class YouSearchProvider implements SearchProvider {
 	name = 'you';
-	description =
-		'You.com web search with LLM-optimized snippets. Returns structured results with multiple query-aware text excerpts per page. Supports search operators, freshness filtering, and domain/language targeting.';
 
 	async search(params: BaseSearchParams): Promise<SearchResult[]> {
 		const api_key = validate_api_key(

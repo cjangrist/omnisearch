@@ -8,7 +8,7 @@ Tavily web search adapter. Tavily is academic/research-leaning; supports `topic`
 - **Vendor**: Tavily
 - **Endpoint**: `POST https://api.tavily.com/search`
 - **Auth**: `Authorization: Bearer <TAVILY_API_KEY>`
-- **Env var**: `TAVILY_API_KEY` (shared with `ai_response/tavily_answer/` and `fetch/tavily/`)
+- **Env var**: `TAVILY_API_KEY` (shared with `fetch/tavily/`)
 - **Returns**: `{ title, url, snippet, source_provider: "tavily" }[]`
 - **Default limit**: 20 results, `search_depth=basic`, `topic=general`.
 
@@ -21,4 +21,4 @@ Tavily web search adapter. Tavily is academic/research-leaning; supports `topic`
 ## Related
 
 - Registered as `tavily` in `../../unified/web_search.ts`.
-- Sister modules: `../../ai_response/tavily_answer/`, `../../fetch/tavily/`.
+- Sister module: `../../fetch/tavily/`.

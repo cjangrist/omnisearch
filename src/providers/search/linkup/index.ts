@@ -29,8 +29,6 @@ interface LinkupSearchResponse {
 
 export class LinkupSearchProvider implements SearchProvider {
 	name = 'linkup';
-	description =
-		'Linkup web search with deep content extraction. Returns rich text snippets from source pages. Supports domain filtering.';
 
 	async search(params: BaseSearchParams): Promise<SearchResult[]> {
 		const api_key = validate_api_key(

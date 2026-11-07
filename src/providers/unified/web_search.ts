@@ -18,7 +18,6 @@ import { PerplexitySearchProvider, registration as perplexity_reg } from '../sea
 import { SerpApiSearchProvider, registration as serpapi_reg } from '../search/serpapi/index.js';
 import { TavilySearchProvider, registration as tavily_reg } from '../search/tavily/index.js';
 import { YouSearchProvider, registration as you_reg } from '../search/you/index.js';
-import { KimiSearchProvider, registration as kimi_reg } from '../search/kimi/index.js';
 import { ParallelSearchProvider, registration as parallel_reg } from '../search/parallel/index.js';
 
 // ─── ADD ONE LINE HERE TO REGISTER A NEW SEARCH PROVIDER ────────────
@@ -32,26 +31,24 @@ const PROVIDERS = [
 	{ name: 'serpapi', ...serpapi_reg, factory: () => new SerpApiSearchProvider() },
 	{ name: 'linkup', ...linkup_reg, factory: () => new LinkupSearchProvider() },
 	{ name: 'you', ...you_reg, factory: () => new YouSearchProvider() },
-	{ name: 'kimi', ...kimi_reg, factory: () => new KimiSearchProvider() },
 	{ name: 'parallel', ...parallel_reg, factory: () => new ParallelSearchProvider() },
 ] as const;
 // ─────────────────────────────────────────────────────────────────────
 
 export type WebSearchProvider = (typeof PROVIDERS)[number]['name'];
 
-export const get_active_search_providers = (): Array<{ name: string; key: () => string | undefined }> =>
-	PROVIDERS.filter((p) => p.key()?.trim()).map((p) => ({ name: p.name, key: p.key }));
+export const get_active_search_providers = (): Array<{ name: string }> =>
+	PROVIDERS.filter((p) => p.key()?.trim()).map((p) => ({ name: p.name }));
 
 export const has_any_search_provider = (): boolean =>
 	PROVIDERS.some((p) => p.key()?.trim());
 
-export interface UnifiedWebSearchParams extends BaseSearchParams {
+interface UnifiedWebSearchParams extends BaseSearchParams {
 	provider: WebSearchProvider;
 }
 
 export class UnifiedWebSearchProvider implements SearchProvider {
 	name = 'web_search';
-	description = `Search the web. Providers: ${PROVIDERS.map((p) => p.name).join(', ')}.`;
 
 	private providers: Map<string, SearchProvider>;
 

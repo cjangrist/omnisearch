@@ -27,7 +27,6 @@ const logger = loggers.worker();
 interface AnalyticsDatasets {
 	requests?: AnalyticsEngineDataset;
 	search?: AnalyticsEngineDataset;
-	fetch?: AnalyticsEngineDataset;
 }
 
 let _datasets: AnalyticsDatasets = {};
@@ -84,7 +83,7 @@ export const emit_request_metric = (m: RequestMetric): void => {
 // ── Dataset B: omni_search — one row per web_search fanout ─────────────────────
 // Index = coarse grounded/raw mode (low volume → stays at 100% sampling).
 // Per-provider detail + grounding internals ride the doubles[] budget.
-export interface SearchMetric {
+interface SearchMetric {
 	mode: string;            // grounded | raw
 	top_provider_win?: string;
 	outcome_summary?: string;
@@ -113,39 +112,6 @@ export const emit_search_metric = (m: SearchMetric): void => {
 			m.grounding_makespan_ms ?? 0, m.grounded_count ?? 0, m.total_urls ?? 0,
 			m.grounding_p50 ?? 0, m.grounding_p95 ?? 0, m.grounding_max ?? 0,
 			m.timeout_count ?? 0, m.retried_count ?? 0,
-		],
-	});
-};
-
-// ── Dataset C: omni_fetch — one row per run_fetch_race ─────────────────────────
-// Index = fetch_provider_used (or outcome when none). This is the high-rate stream
-// and the field you most want to GROUP BY (per-provider win-share / latency / depth).
-// is_grounding_internal separates the ~95% grounding-internal fetches from real
-// user /fetch calls (run_fetch_race doesn't set parent_trace_id, so this flag is the
-// only clean discriminator).
-export interface FetchMetric {
-	provider_used: string;       // '' on exhausted/error
-	outcome: string;             // resolved | exhausted | cache_hit | explicit | fast_fail | error | no_providers
-	breaker?: string;
-	host?: string;
-	error_class?: string;
-	total_ms: number;
-	waterfall_depth: number;     // providers_attempted.length
-	providers_failed_count: number;
-	cache_hit?: boolean;
-	content_length?: number;
-	skip_providers?: boolean;
-	is_grounding_internal?: boolean;
-}
-
-export const emit_fetch_metric = (m: FetchMetric): void => {
-	safe_write(_datasets.fetch, {
-		indexes: [idx(m.provider_used || m.outcome)],
-		blobs: [m.provider_used, m.outcome, m.breaker ?? '', m.host ?? '', m.error_class ?? ''],
-		doubles: [
-			m.total_ms, m.waterfall_depth, m.providers_failed_count,
-			bool01(m.cache_hit), m.content_length ?? 0,
-			bool01(m.skip_providers), bool01(m.is_grounding_internal),
 		],
 	});
 };

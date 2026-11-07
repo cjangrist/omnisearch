@@ -13,7 +13,8 @@ const request_id_store = new AsyncLocalStorage<string>();
 export const run_with_request_id = <R>(id: string, fn: () => R): R =>
 	request_id_store.run(id, fn);
 
-export const get_request_id = (): string | undefined =>
+// Internal-only — the active request id is read from ALS, never imported elsewhere.
+const get_request_id = (): string | undefined =>
 	request_id_store.getStore();
 
 interface LogContext {
@@ -46,26 +47,9 @@ const DEFAULT_MIN_LEVEL: LogLevel = 'info';
 
 class Logger {
 	private component: string;
-	private requestId?: string;
 
-	constructor(component: string, requestId?: string) {
+	constructor(component: string) {
 		this.component = component;
-		this.requestId = requestId;
-	}
-
-	/**
-	 * Create a child logger with additional context
-	 */
-	child(context: LogContext): Logger {
-		const childLogger = new Logger(context.component || this.component, context.requestId || this.requestId);
-		return childLogger;
-	}
-
-	/**
-	 * Set request ID for correlation
-	 */
-	setRequestId(requestId: string): void {
-		this.requestId = requestId;
 	}
 
 	private shouldLog(level: LogLevel): boolean {
@@ -83,7 +67,7 @@ class Logger {
 			component: this.component,
 			context: {
 				...context,
-				requestId: get_request_id() ?? this.requestId,
+				requestId: get_request_id(),
 			},
 		};
 		return JSON.stringify(entry);
@@ -111,10 +95,6 @@ class Logger {
 		}
 	}
 
-	trace(message: string, context?: LogContext): void {
-		this.log('trace', message, context);
-	}
-
 	debug(message: string, context?: LogContext): void {
 		this.log('debug', message, context);
 	}
@@ -129,42 +109,6 @@ class Logger {
 
 	error(message: string, context?: LogContext): void {
 		this.log('error', message, context);
-	}
-
-	/**
-	 * Log operation start with timing
-	 */
-	startOp(operation: string, context?: LogContext): { end: (success?: boolean, extra?: Record<string, unknown>) => void } {
-		const startTime = Date.now();
-		this.info(`Starting: ${operation}`, { op: operation, ...context });
-
-		return {
-			end: (success = true, extra = {}) => {
-				const duration = Date.now() - startTime;
-				const level = success ? 'info' : 'warn';
-				this.log(level, `Completed: ${operation}`, {
-					op: operation,
-					duration_ms: duration,
-					success,
-					...context,
-					...extra,
-				});
-			},
-		};
-	}
-
-	/**
-	 * Log provider-specific operations
-	 */
-	providerLog(provider: string, level: LogLevel, message: string, context?: LogContext): void {
-		this.log(level, `[${provider}] ${message}`, { provider, ...context });
-	}
-
-	/**
-	 * Log request details
-	 */
-	request(method: string, path: string, context?: LogContext): void {
-		this.info(`${method} ${path}`, { op: 'http_request', method, path, ...context });
 	}
 
 	/**
@@ -189,18 +133,8 @@ export const loggers = {
 	config: () => new Logger('config'),
 	providers: () => new Logger('providers'),
 	search: (provider?: string) => new Logger(provider ? `search:${provider}` : 'search'),
-	aiResponse: (provider?: string) => new Logger(provider ? `ai_response:${provider}` : 'ai_response'),
-	server: () => new Logger('server'),
 	rest: () => new Logger('rest_api'),
 	mcp: () => new Logger('mcp'),
-	rrf: () => new Logger('rrf_ranking'),
-	snippets: () => new Logger('snippet_selector'),
 	http: () => new Logger('http_client'),
 	fetch: (provider?: string) => new Logger(provider ? `fetch:${provider}` : 'fetch'),
 };
-
-// Export Logger class for custom instances
-export { Logger };
-
-// Default logger for quick usage
-export const logger = new Logger('app');

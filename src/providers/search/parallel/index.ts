@@ -53,8 +53,6 @@ interface ParallelSearchResponse {
 
 export class ParallelSearchProvider implements SearchProvider {
 	name = 'parallel';
-	description =
-		'Parallel.ai web search via the v1/search endpoint (mode:"advanced"). Owns its own crawler index — strong on multi-hop synthesis, obscure-entity queries, and structured excerpts.';
 
 	async search(params: BaseSearchParams): Promise<SearchResult[]> {
 		const api_key = validate_api_key(
@@ -108,11 +106,6 @@ export class ParallelSearchProvider implements SearchProvider {
 					url: r.url,
 					snippet: (r.excerpts ?? []).join(SNIPPET_JOIN),
 					source_provider: this.name,
-					metadata: {
-						search_id: data.search_id,
-						publish_date: r.publish_date ?? null,
-						excerpt_count: (r.excerpts ?? []).length,
-					},
 				}));
 		} catch (error) {
 			handle_provider_error(error, this.name, 'fetch search results');

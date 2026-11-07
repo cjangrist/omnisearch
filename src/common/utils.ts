@@ -24,7 +24,8 @@ export const make_signal = (timeout_ms: number, external?: AbortSignal): AbortSi
 const text_encoder = new TextEncoder();
 const CONTROL_CHARS_RE = /[\x00-\x1F\x7F]/g;
 
-export const timing_safe_equal = (a: string, b: string): boolean => {
+// Internal-only — used by authenticate_rest_request below.
+const timing_safe_equal = (a: string, b: string): boolean => {
 	const a_buf = text_encoder.encode(a);
 	const b_buf = text_encoder.encode(b);
 	if (a_buf.byteLength !== b_buf.byteLength) return false;
@@ -76,17 +77,11 @@ export const validate_api_key = (
 	return normalize_api_key(key);
 };
 
-export const handle_rate_limit = (
-	provider: string,
-	reset_time?: Date,
-): never => {
+export const handle_rate_limit = (provider: string): never => {
 	throw new ProviderError(
 		ErrorType.RATE_LIMIT,
-		`Rate limit exceeded for ${provider}${
-			reset_time ? `. Reset at ${reset_time.toISOString()}` : ''
-		}`,
+		`Rate limit exceeded for ${provider}`,
 		provider,
-		{ reset_time },
 	);
 };
 
@@ -132,26 +127,21 @@ export const create_error_response = (
 	};
 };
 
-export interface RetryOptions {
+interface RetryOptions {
 	max_retries?: number;
-	min_timeout_ms?: number;
-	max_timeout_ms?: number;
 	signal?: AbortSignal;
 }
 
 export const retry_with_backoff = async <T>(
 	fn: () => Promise<T>,
-	options?: number | RetryOptions,
+	options?: RetryOptions,
 ): Promise<T> => {
-	// Accept legacy (number) or new (options object) signature
-	const opts: RetryOptions = typeof options === 'number'
-		? { max_retries: options }
-		: options ?? {};
+	const opts = options ?? {};
 
 	return pRetry(fn, {
 		retries: opts.max_retries ?? 3,
-		minTimeout: opts.min_timeout_ms ?? 2000,
-		maxTimeout: opts.max_timeout_ms ?? 5000,
+		minTimeout: 2000,
+		maxTimeout: 5000,
 		randomize: true,
 		signal: opts.signal,
 		shouldRetry: (error: unknown) => {

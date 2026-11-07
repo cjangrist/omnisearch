@@ -7,7 +7,7 @@
 import { ProviderError } from '../common/types.js';
 import { loggers } from '../common/logger.js';
 import { authenticate_rest_request, sanitize_for_log } from '../common/utils.js';
-import { get_web_search_provider, get_fetch_provider } from './tools.js';
+import { get_web_search_provider } from './tools.js';
 import { run_web_search_fanout } from './web_search_fanout.js';
 import { OPENWEBUI_API_KEY, OMNISEARCH_API_KEY } from '../config/env.js';
 
@@ -112,7 +112,6 @@ export async function handle_rest_search(
 		result = await run_web_search_fanout(web_provider, query, {
 			skip_quality_filter: raw,
 			grounded_snippets,
-			fetch_provider: get_fetch_provider(),
 		});
 	} catch (err) {
 		const error_message = err instanceof Error ? err.message : String(err);
@@ -134,7 +133,7 @@ export async function handle_rest_search(
 		}));
 
 	const provider_names = result.providers_succeeded.map((p) => p.provider);
-	const failed_count = result.providers_failed?.length ?? 0;
+	const failed_count = result.providers_failed.length;
 
 	logger.info('Search completed', {
 		op: 'search_complete',
@@ -151,7 +150,7 @@ export async function handle_rest_search(
 	if (failed_count > 0) {
 		logger.warn('Some providers failed during search', {
 			op: 'search_complete',
-			failed_providers: result.providers_failed?.map((p) => p.provider),
+			failed_providers: result.providers_failed.map((p) => p.provider),
 			failed_count,
 		});
 	}
@@ -161,7 +160,7 @@ export async function handle_rest_search(
 		const duration = Date.now() - start_time;
 		logger.response('POST', '/search', 502, duration, { failed_count });
 		return Response.json(
-			{ error: 'All search providers failed', failed_providers: result.providers_failed?.map((p) => p.provider) },
+			{ error: 'All search providers failed', failed_providers: result.providers_failed.map((p) => p.provider) },
 			{ status: 502 },
 		);
 	}
